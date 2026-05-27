@@ -1,14 +1,12 @@
 import * as vscode from "vscode";
 import { createHash } from "crypto";
 import type {
-  SessionData,
   SessionThread,
   SessionMessage,
   SessionStore,
 } from "./sessionStore";
 import { ThreadMapper } from "./threadMapper";
 import { SCHEME_BASE } from "./baseContentProvider";
-import { getDefaultTargetBranch } from "./config";
 
 export class CommentManager implements vscode.Disposable {
   private readonly _onDidUpdateThread = new vscode.EventEmitter<string>();
@@ -99,55 +97,31 @@ export class CommentManager implements vscode.Disposable {
   }
 
   /**
-   * Ensure a code review session exists for the given branch.
-   * Creates one automatically if none exists (first-comment UX).
-   */
-  private async _ensureSession(
-    sessionId: string,
-    branchName: string | null,
-  ): Promise<void> {
-    let existing: SessionData | null;
-    try {
-      existing = await this._sessionStore.getSession(sessionId);
-    } catch (err) {
-      // Session file exists but is unreadable — do not overwrite
-      throw new Error(
-        `Cannot auto-create session: existing file is unreadable — ${String(err)}`,
-      );
-    }
-    if (existing) return;
-
-    const session: SessionData = {
-      sessionId,
-      worktreePath: this._workspaceRoot,
-      sourceBranch: branchName ?? sessionId,
-      targetBranch: getDefaultTargetBranch(),
-      verdict: null,
-      threads: [],
-      metadata: {
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    };
-    this._sessionStore.saveSession(sessionId, session);
-    this._outputChannel.appendLine(
-      `Auto-created review session for ${sessionId}`,
-    );
-    this._onDidCreateSession.fire(sessionId);
-  }
-
-  /**
    * Register the comment action commands (create, reply, resolve, unresolve).
    * Must be called after the extension context is ready and a sessionId is known.
-   * The getSessionId callback is used at command invocation time so it always
-   * reflects the current branch's sessionId.
+   * The getSessionId/getBranchName/resolveTargetBranch callbacks are evaluated
+   * at command invocation time so they always see the current state.
    */
   setupCommentHandlers(
     context: vscode.ExtensionContext,
     getSessionId: () => string | null,
-    outputChannel: vscode.OutputChannel,
-    getBranchName?: () => string | null,
+    getBranchName: () => string | null,
+    resolveTargetBranch: () => string,
   ): void {
+    const outputChannel = this._outputChannel;
+    const ensureSession = async (sessionId: string): Promise<void> => {
+      const { created } = await this._sessionStore.ensureSession(sessionId, {
+        worktreePath: this._workspaceRoot,
+        sourceBranch: getBranchName() ?? sessionId,
+        targetBranch: resolveTargetBranch(),
+      });
+      if (created) {
+        outputChannel.appendLine(
+          `Auto-created review session for ${sessionId}`,
+        );
+        this._onDidCreateSession.fire(sessionId);
+      }
+    };
     context.subscriptions.push(
       // Create a new thread (user types in the "+" gutter inline box)
       // VS Code passes a single CommentReply object with { text, thread }
@@ -167,7 +141,7 @@ export class CommentManager implements vscode.Disposable {
           }
           try {
             // Auto-create session on first comment
-            await this._ensureSession(sessionId, getBranchName?.() ?? null);
+            await ensureSession(sessionId);
 
             const sessionThread = await this._buildNewThread(
               thread,

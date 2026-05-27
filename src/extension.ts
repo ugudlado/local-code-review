@@ -95,11 +95,28 @@ export function activate(context: vscode.ExtensionContext): void {
   // Use commentSessionId (always set when on any branch) so comments work
   // on default branches too — separate from sessionId, which gates status-bar
   // dormancy and remains null on default branches.
+  // Build lifecycle first so we can pass its resolveTargetBranch into the
+  // comment handlers. CommentManager needs it to set the right target on
+  // auto-created sessions.
+  const lifecycle = createLifecycle({
+    context,
+    outputChannel,
+    workspaceRoot,
+    sessionStore,
+    branchDetector,
+    commentManager,
+    diffPanelManager,
+    sessionWatcher,
+    skillGenerator,
+    statusBar,
+    threadsTree,
+  });
+
   commentManager.setupCommentHandlers(
     context,
     () => branchDetector.commentSessionId,
-    outputChannel,
     () => branchDetector.branchName,
+    lifecycle.resolveTargetBranch,
   );
 
   // Restore comment visibility from workspace state (default: visible).
@@ -122,20 +139,6 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
   );
-
-  const lifecycle = createLifecycle({
-    context,
-    outputChannel,
-    workspaceRoot,
-    sessionStore,
-    branchDetector,
-    commentManager,
-    diffPanelManager,
-    sessionWatcher,
-    skillGenerator,
-    statusBar,
-    threadsTree,
-  });
 
   lifecycle.subscribe();
 

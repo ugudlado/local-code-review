@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { BranchDetector } from "../branchDetector";
 import type { DiffPanelManager } from "../diffPanelManager";
-import type { SessionStore, SessionThread } from "../sessionStore";
+import type { SessionStore } from "../sessionStore";
 import type { SkillGenerator } from "../skillGenerator";
 import { DiffStatus } from "../diffParser";
 import {
@@ -71,32 +71,20 @@ export function registerCommands(deps: CommandDeps): void {
         return;
       }
 
-      const existing = await sessionStore.getSession(sessionId);
-      if (existing) {
-        void vscode.window.showInformationMessage(
-          "Review session already exists for this branch.",
-        );
-        return;
-      }
-
-      outputChannel.appendLine(`Creating new review session for ${sessionId}`);
-      const session = {
-        sessionId,
-        worktreePath: workspaceRoot,
-        sourceBranch: branchDetector.branchName ?? sessionId,
-        targetBranch: resolveTargetBranch(),
-        verdict: null as "approved" | "changes_requested" | null,
-        threads: [] as SessionThread[],
-        metadata: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      };
-
       try {
-        sessionStore.saveSession(sessionId, session);
+        const { created } = await sessionStore.ensureSession(sessionId, {
+          worktreePath: workspaceRoot,
+          sourceBranch: branchDetector.branchName ?? sessionId,
+          targetBranch: resolveTargetBranch(),
+        });
+        if (!created) {
+          void vscode.window.showInformationMessage(
+            "Review session already exists for this branch.",
+          );
+          return;
+        }
+        outputChannel.appendLine(`Created review session for ${sessionId}`);
         await hydrateSession(sessionId);
-        outputChannel.appendLine("Review session created");
         void vscode.window.showInformationMessage(
           `Review session created for ${sessionId}`,
         );

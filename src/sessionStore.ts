@@ -94,6 +94,38 @@ export class SessionStore {
     this.write(sessionId, session);
   }
 
+  /**
+   * Create a session if one does not already exist. Returns the resulting
+   * session and whether it was newly created. The single point of truth for
+   * what a fresh session looks like — both the "Start Review" command and
+   * the auto-create-on-first-comment path go through here so they cannot
+   * drift apart.
+   */
+  async ensureSession(
+    sessionId: string,
+    defaults: {
+      worktreePath: string;
+      sourceBranch: string;
+      targetBranch: string;
+    },
+  ): Promise<{ session: SessionData; created: boolean }> {
+    const existing = await this.getSession(sessionId);
+    if (existing) return { session: existing, created: false };
+
+    const now = new Date().toISOString();
+    const session: SessionData = {
+      sessionId,
+      worktreePath: defaults.worktreePath,
+      sourceBranch: defaults.sourceBranch,
+      targetBranch: defaults.targetBranch,
+      verdict: null,
+      threads: [],
+      metadata: { createdAt: now, updatedAt: now },
+    };
+    this.write(sessionId, session);
+    return { session, created: true };
+  }
+
   async createThread(
     sessionId: string,
     thread: SessionThread,
