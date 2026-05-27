@@ -19,23 +19,27 @@ make                # List all available targets
 
 ```
 src/                        — Extension source (TypeScript)
-  extension.ts              — Extension entry point (activate/deactivate)
+  extension.ts              — Thin activate() entry: construction + event wiring only
+  activation/
+    commands.ts             — All resolvr.* command handlers (registerCommands)
+    lifecycle.ts            — init / hydrateSession / branch-change subscriber
   config.ts                 — VS Code settings reader (target branch, coding agent)
-  sessionStore.ts           — File-based session CRUD
+  sessionStore.ts           — SessionStore class — file-based session CRUD
   sessionWatcher.ts         — FileSystemWatcher for live session updates
   branchDetector.ts         — Watches .git/HEAD for branch changes
   statusBar.ts              — Status bar state machine (detecting → ready → review)
   changedFilesTree.ts       — TreeDataProvider for Changed Files sidebar
   threadsTree.ts            — TreeDataProvider for review threads sidebar
   diffPanelManager.ts       — Diff tree population and tab opening
-  diffParser.ts             — Git diff output parser
-  gitDiff.ts                — Git diff subprocess runner
+  diffParser.ts             — Git diff output parser (pure, tested)
+  gitDiff.ts                — Git diff subprocess runner (helpers tested)
   baseContentProvider.ts    — TextDocumentContentProvider for base-revision files
   fileDecorationProvider.ts — File decoration badges (added/modified/deleted)
   commentManager.ts         — VS Code CommentController integration
   threadMapper.ts           — Maps session threads to VS Code comment ranges
   agentInvoker.ts           — AI agent spawner for thread resolution
   skillGenerator.ts         — Generates .review/AGENTS.md for AI agents
+  *.test.ts                 — Vitest unit tests for the pure layer
 dist/                       — esbuild bundle output (NOT committed, gitignored)
 Makefile                    — Build/package/install shortcuts (run `make` for help)
 .claude/commands/           — Project-level slash commands (release-prep)
@@ -55,12 +59,14 @@ make                # Show all Makefile targets (default)
 make build          # Build extension bundle (esbuild → dist/extension.js)
 make watch          # Watch mode for development
 make type-check     # TypeScript type checking
+make test           # Run vitest unit tests (pure layer)
+make test-watch     # Vitest in watch mode
 make package        # Package .vsix for distribution (builds first)
 make install        # Build + package + install into VS Code
 make format         # Format all source files (Prettier)
 make knip           # Dead code detection (run before merge, not pre-commit)
 make knip-fix       # Auto-remove safe unused exports
-make dev            # Type-check then build
+make dev            # Type-check, test, then build
 make clean          # Remove build artifacts (dist/, *.vsix)
 ```
 
@@ -76,6 +82,16 @@ Press **F5** in VS Code to launch the Extension Development Host for testing. Th
 - **Comments**: Native VS Code CommentController API for inline annotations
 - **File watching**: `vscode.workspace.createFileSystemWatcher` for live session updates
 - **AI resolution**: "Resolve with AI" command spawns configured coding agent via terminal
+
+### Layers (testability)
+
+The codebase is organized in three implicit layers — keep new code in the right one:
+
+1. **Pure** (no `vscode`, no `fs`, no `execFile`): `diffParser.ts`, `threadMapper.ts`, helpers in `gitDiff.ts` (`parseDiffNumstat`, `applyLineStats`). Unit-testable with vitest — see `*.test.ts`.
+2. **IO** (`fs` / `child_process`, no `vscode`): `sessionStore.ts`, exec parts of `gitDiff.ts`, `sessionWatcher.ts` primitives. Testable with tmpdirs and real git, no VS Code host.
+3. **VS Code-bound**: trees, comment controller, status bar, activation entry. Integration-only; keep thin.
+
+Construction lives in `extension.ts`. Dependencies are passed in via constructor or a `deps` object — there is no DI container and no service locator. The `activation/` folder owns command bodies and the init/branch-change lifecycle.
 
 ## Settings
 
