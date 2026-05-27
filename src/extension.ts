@@ -6,7 +6,6 @@ import { BranchDetector } from "./branchDetector";
 import { SessionStore } from "./sessionStore";
 import type { SessionThread } from "./sessionStore";
 import { SkillGenerator } from "./skillGenerator";
-import { resolveInExistingTerminal, resolveWithNewAgent } from "./agentInvoker";
 import { StatusBar } from "./statusBar";
 import { CommentManager } from "./commentManager";
 import { SessionWatcher } from "./sessionWatcher";
@@ -17,26 +16,11 @@ import {
   SCHEME_EMPTY,
 } from "./baseContentProvider";
 import { DiffPanelManager } from "./diffPanelManager";
-import { DiffStatus } from "./diffParser";
 import { ThreadsTreeProvider } from "./threadsTree";
 import { getDefaultTargetBranch } from "./config";
+import { registerCommands } from "./activation/commands";
 
 const execFileAsync = promisify(execFile);
-
-// Minimal types for the VS Code built-in Git extension API
-interface GitExtensionAPI {
-  getRepository(uri: vscode.Uri): GitRepository | null;
-}
-interface GitRepository {
-  getBranches(query: { remote?: boolean; sort?: string }): Promise<GitRef[]>;
-}
-interface GitRef {
-  readonly name?: string;
-  readonly remote?: string;
-}
-interface GitExtension {
-  getAPI(version: 1): GitExtensionAPI;
-}
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel("Resolvr");
@@ -144,7 +128,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  let currentSessionId: string | null = null;
+  // Shared mutable holder so command handlers, lifecycle hooks, and the
+  // branch-change subscriber all see the same current sessionId.
+  const sessionTracker = { current: null as string | null };
 
   /** Resolve the target branch: workspace state override > config setting. */
   const resolveTargetBranch = (): string => {
@@ -169,7 +155,7 @@ export function activate(context: vscode.ExtensionContext): void {
         outputChannel.appendLine(
           `Diff base mode changed — refreshing diff tree`,
         );
-        void diffPanelManager.refresh(currentSessionId ?? undefined);
+        void diffPanelManager.refresh(sessionTracker.current ?? undefined);
       }
     }),
   );
@@ -177,10 +163,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // Subscribe to file watcher events (replaces WS session-updated)
   context.subscriptions.push(
     sessionWatcher.onDidSessionChange((session) => {
-      if (!currentSessionId) return;
+      if (!sessionTracker.current) return;
       const threads = session.threads ?? [];
       outputChannel.appendLine(
-        `Session file changed: reconciling ${threads.length} threads for ${currentSessionId}`,
+        `Session file changed: reconciling ${threads.length} threads for ${sessionTracker.current}`,
       );
       commentManager.loadThreads(threads);
       const openCount = threads.filter(
@@ -197,7 +183,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // propagate live without requiring a window reload.
   context.subscriptions.push(
     commentManager.onDidCreateSession(async (sessionId) => {
-      currentSessionId = sessionId;
+      sessionTracker.current = sessionId;
       await hydrateSession(sessionId);
     }),
   );
@@ -231,7 +217,7 @@ export function activate(context: vscode.ExtensionContext): void {
     refreshTimer = setTimeout(() => {
       outputChannel.appendLine("File change detected — refreshing diff tree");
       void diffPanelManager.refresh(
-        currentSessionId ?? undefined,
+        sessionTracker.current ?? undefined,
         resolveTargetBranch(),
       );
     }, 1000);
@@ -340,7 +326,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const init = async () => {
     await resolveWorkspace();
     const sessionId = await branchDetector.initialize();
-    currentSessionId = sessionId;
+    sessionTracker.current = sessionId;
 
     if (!sessionId) {
       statusBar.setNoBranch();
@@ -369,7 +355,7 @@ export function activate(context: vscode.ExtensionContext): void {
     outputChannel.appendLine(
       `Branch changed — session: ${newSessionId ?? "none"}`,
     );
-    currentSessionId = newSessionId;
+    sessionTracker.current = newSessionId;
     sessionWatcher.unwatch();
 
     if (!newSessionId) {
@@ -391,332 +377,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // Register commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand("resolvr.refresh", () => {
-      outputChannel.appendLine("Refresh command invoked");
-      void init();
-    }),
-    vscode.commands.registerCommand("resolvr.startReview", async () => {
-      const sessionId = branchDetector.sessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage(
-          "No working branch detected. Switch to a non-default branch first.",
-        );
-        return;
-      }
+  registerCommands({
+    context,
+    outputChannel,
+    workspaceRoot,
+    sessionStore,
+    branchDetector,
+    diffPanelManager,
+    skillGenerator,
+    sessionTracker,
+    resolveTargetBranch,
+    init,
+    hydrateSession,
+  });
 
-      const existing = await sessionStore.getSession(sessionId);
-      if (existing) {
-        void vscode.window.showInformationMessage(
-          "Review session already exists for this branch.",
-        );
-        return;
-      }
-
-      outputChannel.appendLine(`Creating new review session for ${sessionId}`);
-      const session = {
-        sessionId,
-        worktreePath: workspaceRoot,
-        sourceBranch: branchDetector.branchName ?? sessionId,
-        targetBranch: resolveTargetBranch(),
-        verdict: null as "approved" | "changes_requested" | null,
-        threads: [] as SessionThread[],
-        metadata: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      };
-
-      try {
-        sessionStore.saveSession(sessionId, session);
-        currentSessionId = sessionId;
-        await hydrateSession(sessionId);
-        outputChannel.appendLine("Review session created");
-        void vscode.window.showInformationMessage(
-          `Review session created for ${sessionId}`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        outputChannel.appendLine(`Failed to create session: ${msg}`);
-        void vscode.window.showErrorMessage(
-          `Failed to create review session: ${msg}`,
-        );
-      }
-    }),
-    vscode.commands.registerCommand("resolvr.requestChanges", async () => {
-      const sessionId = branchDetector.commentSessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage("No active working branch.");
-        return;
-      }
-
-      outputChannel.appendLine(
-        `Request Changes: setting verdict for ${sessionId}`,
-      );
-
-      try {
-        await sessionStore.setVerdict(sessionId, "changes_requested");
-        void vscode.window.showInformationMessage(
-          "Verdict saved. Run /resolve in your Claude session to process threads.",
-        );
-        outputChannel.appendLine("Verdict set to changes_requested");
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        outputChannel.appendLine(`Request Changes failed: ${msg}`);
-        void vscode.window.showErrorMessage(`Failed to set verdict: ${msg}`);
-      }
-    }),
-
-    // Diff panel commands
-    vscode.commands.registerCommand("resolvr.openDiff", async () => {
-      const sessionId = branchDetector.sessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage(
-          "No working branch detected. Switch to a non-default branch first.",
-        );
-        return;
-      }
-      try {
-        await diffPanelManager.open(sessionId ?? undefined);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        outputChannel.appendLine(`openDiff failed: ${msg}`);
-        void vscode.window.showErrorMessage(
-          `Resolvr: Failed to open diff — ${msg}`,
-        );
-      }
-    }),
-
-    vscode.commands.registerCommand(
-      "resolvr.openDiffFile",
-      async (file: unknown) => {
-        if (file && typeof file === "object" && "path" in file) {
-          await diffPanelManager.openFile(
-            file as {
-              path: string;
-              oldPath: string;
-              newPath: string;
-              status: DiffStatus;
-            },
-          );
-        }
-      },
-    ),
-
-    vscode.commands.registerCommand(
-      "resolvr.goToThread",
-      async (filePath: string, line: number) => {
-        const fileRef = diffPanelManager.getFileByPath(filePath) ?? {
-          path: filePath,
-          oldPath: filePath,
-          newPath: filePath,
-          status: DiffStatus.Modified,
-        };
-        await diffPanelManager.openFile(fileRef);
-        setTimeout(() => {
-          const editor = vscode.window.activeTextEditor;
-          if (editor) {
-            const pos = new vscode.Position(Math.max(0, line - 1), 0);
-            editor.revealRange(
-              new vscode.Range(pos, pos),
-              vscode.TextEditorRevealType.InCenter,
-            );
-          }
-        }, 300);
-      },
-    ),
-
-    vscode.commands.registerCommand("resolvr.refreshDiff", async () => {
-      const sessionId = branchDetector.sessionId;
-      try {
-        await diffPanelManager.refresh(sessionId ?? undefined);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        outputChannel.appendLine(`refreshDiff failed: ${msg}`);
-      }
-    }),
-
-    vscode.commands.registerCommand("resolvr.closeDiff", () => {
-      diffPanelManager.close();
-    }),
-
-    // View mode toggle: flat ↔ compact-tree
-    vscode.commands.registerCommand("resolvr.toggleFileViewMode", () => {
-      diffPanelManager.toggleViewMode();
-    }),
-
-    // Change target branch for diff comparisons
-    vscode.commands.registerCommand("resolvr.changeTargetBranch", async () => {
-      const sessionId = branchDetector.sessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage(
-          "No working branch detected. Switch to a non-default branch first.",
-        );
-        return;
-      }
-
-      // List branches using VS Code Git extension API, fallback to git CLI
-      let branchNames: string[] = [];
-      try {
-        const gitExt =
-          vscode.extensions.getExtension<GitExtension>("vscode.git");
-        if (gitExt) {
-          const git = gitExt.isActive
-            ? gitExt.exports
-            : await gitExt.activate();
-          const api = git.getAPI(1);
-          const repo = api.getRepository(vscode.Uri.file(workspaceRoot));
-          if (repo) {
-            const refs = await repo.getBranches({
-              remote: true,
-              sort: "committerdate",
-            });
-            branchNames = refs
-              .map((r) => r.name ?? "")
-              .filter((n) => n.length > 0);
-          }
-        }
-      } catch {
-        // Git extension unavailable — fall back to CLI
-      }
-
-      if (branchNames.length === 0) {
-        try {
-          const { stdout } = await execFileAsync("git", ["branch", "-a"], {
-            cwd: workspaceRoot,
-          });
-          branchNames = stdout
-            .split("\n")
-            .map((l) => l.replace(/^\*?\s+/, "").trim())
-            .filter((l) => l.length > 0 && !l.includes("->"));
-        } catch {
-          void vscode.window.showErrorMessage("Failed to list branches.");
-          return;
-        }
-      }
-
-      // Get current target for pre-selection (session > workspace state > config)
-      const session = await sessionStore.getSession(sessionId);
-      const currentTarget = session?.targetBranch ?? resolveTargetBranch();
-
-      const items = branchNames.map((name) => ({
-        label: name === currentTarget ? `$(check) ${name}` : name,
-        description: name === currentTarget ? "current" : undefined,
-        branch: name.replace(/^remotes\//, ""),
-      }));
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: `Current target: ${currentTarget}`,
-        title: "Select Target Branch",
-      });
-
-      if (!picked) return;
-
-      const newTarget = picked.branch;
-      outputChannel.appendLine(
-        `Changing target branch to ${newTarget} for session ${sessionId}`,
-      );
-
-      // Persist to session file if one exists, otherwise to workspace state
-      if (session) {
-        session.targetBranch = newTarget;
-        session.metadata.updatedAt = new Date().toISOString();
-        sessionStore.saveSession(sessionId, session);
-      } else {
-        await context.workspaceState.update("targetBranchOverride", newTarget);
-      }
-
-      // refresh() resolves base ref and updates the content provider
-      await diffPanelManager.refresh(sessionId ?? undefined, newTarget);
-
-      void vscode.window.showInformationMessage(
-        `Target branch changed to ${newTarget}`,
-      );
-    }),
-
-    // Resolve open threads with AI agent
-    vscode.commands.registerCommand("resolvr.resolveWithAI", async () => {
-      const sessionId = branchDetector.commentSessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage(
-          "No active branch — open a workspace with a git branch first.",
-        );
-        return;
-      }
-      const session = await sessionStore.getSession(sessionId);
-      if (!session) {
-        void vscode.window.showWarningMessage(
-          "No review session found. Start a review first.",
-        );
-        return;
-      }
-
-      const choice = await vscode.window.showQuickPick(
-        [
-          {
-            label: "$(terminal) Send to existing terminal",
-            description: "Send resolve prompt to an agent already running",
-            mode: "existing" as const,
-          },
-          {
-            label: "$(add) Start new agent",
-            description: "Spawn a new agent process to resolve threads",
-            mode: "new" as const,
-          },
-        ],
-        { placeHolder: "How should the agent be invoked?" },
-      );
-
-      if (!choice) return;
-
-      if (choice.mode === "existing") {
-        await resolveInExistingTerminal(
-          sessionStore.getSessionFilePath(sessionId),
-          session,
-          workspaceRoot,
-          outputChannel,
-        );
-      } else {
-        resolveWithNewAgent(
-          sessionStore.getSessionFilePath(sessionId),
-          session,
-          workspaceRoot,
-          outputChannel,
-        );
-      }
-    }),
-
-    // Regenerate agent skill files
-    vscode.commands.registerCommand("resolvr.regenerateSkills", async () => {
-      const sessionId = branchDetector.commentSessionId;
-      if (!sessionId) {
-        void vscode.window.showWarningMessage(
-          "No active branch — open a workspace with a git branch first.",
-        );
-        return;
-      }
-      try {
-        const session = await sessionStore.getSession(sessionId);
-        const skillContext = await skillGenerator.buildContext(
-          sessionId,
-          sessionStore.getSessionFilePath(sessionId),
-          session,
-        );
-        await skillGenerator.generate(skillContext, session);
-        void vscode.window.showInformationMessage(
-          "Agent skill files regenerated in .review/",
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        void vscode.window.showErrorMessage(
-          `Failed to regenerate skills: ${msg}`,
-        );
-      }
-    }),
-  );
-
-  // Run initialization
   void init();
 }
 
