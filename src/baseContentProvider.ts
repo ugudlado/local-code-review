@@ -6,7 +6,14 @@ const execFileAsync = promisify(execFile);
 
 /**
  * Provides old-side file content for diff editors via a virtual document scheme.
- * URI format: resolvr-base:/<relative-path>?ref=<branch>
+ * URI format: resolvr-base:/<relative-path>
+ *
+ * The "base ref" is whatever the diff tree is diffing against — either the
+ * target branch tip or the merge-base SHA — resolved by the caller via
+ * `resolveDiffBaseRef`. Keeping the resolution in one place (DiffPanelManager)
+ * ensures the file list and the base content always agree; an earlier bug
+ * where the tree used `main` while base content used merge-base showed up as
+ * empty diff tabs for files that appeared in the tree.
  */
 export class BaseContentProvider
   implements vscode.TextDocumentContentProvider, vscode.Disposable
@@ -15,35 +22,18 @@ export class BaseContentProvider
   readonly onDidChange = this._onDidChange.event;
 
   private _cache = new Map<string, string>();
-  private _mergeBaseSha: string | null = null;
   private _workspaceRoot: string;
-  private _targetBranch: string;
+  private _baseRef: string;
 
-  constructor(workspaceRoot: string, targetBranch: string = "main") {
+  constructor(workspaceRoot: string, baseRef: string = "main") {
     this._workspaceRoot = workspaceRoot;
-    this._targetBranch = targetBranch;
+    this._baseRef = baseRef;
   }
 
-  setTargetBranch(branch: string): void {
-    if (this._targetBranch === branch) return;
-    this._targetBranch = branch;
+  setBaseRef(ref: string): void {
+    if (this._baseRef === ref) return;
+    this._baseRef = ref;
     this.invalidate();
-  }
-
-  async resolveMergeBase(): Promise<string> {
-    if (this._mergeBaseSha) return this._mergeBaseSha;
-    try {
-      const { stdout } = await execFileAsync(
-        "git",
-        ["merge-base", "HEAD", this._targetBranch],
-        { cwd: this._workspaceRoot },
-      );
-      this._mergeBaseSha = stdout.trim();
-    } catch {
-      // Fallback to target branch ref if merge-base fails (e.g., no common ancestor)
-      this._mergeBaseSha = this._targetBranch;
-    }
-    return this._mergeBaseSha;
   }
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
@@ -54,11 +44,10 @@ export class BaseContentProvider
     const cached = this._cache.get(relativePath);
     if (cached !== undefined) return cached;
 
-    const ref = await this.resolveMergeBase();
     try {
       const { stdout } = await execFileAsync(
         "git",
-        ["show", `${ref}:${relativePath}`],
+        ["show", `${this._baseRef}:${relativePath}`],
         { cwd: this._workspaceRoot, maxBuffer: 10 * 1024 * 1024 },
       );
       this._cache.set(relativePath, stdout);
@@ -83,7 +72,6 @@ export class BaseContentProvider
     } else {
       const keys = [...this._cache.keys()];
       this._cache.clear();
-      this._mergeBaseSha = null;
       for (const key of keys) {
         this._onDidChange.fire(this._buildUri(key));
       }

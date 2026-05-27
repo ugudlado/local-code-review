@@ -5,3 +5,12 @@ export function getDefaultTargetBranch(): string {
     .getConfiguration("resolvr")
     .get<string>("defaultTargetBranch", "main");
 }
+
+export type DiffBaseMode = "merge-base" | "target-tip";
+
+export function getConfiguredDiffBaseMode(): DiffBaseMode {
+  const value = vscode.workspace
+    .getConfiguration("resolvr")
+    .get<string>("diffBase", "merge-base");
+  return value === "target-tip" ? "target-tip" : "merge-base";
+}

@@ -261,6 +261,19 @@
           "type": "string",
           "default": "main",
           "description": "Default target branch for diff comparisons (e.g. 'main', 'master', 'develop'). New review sessions use this as their base branch."
+        },
+        "resolvr.diffBase": {
+          "type": "string",
+          "enum": [
+            "merge-base",
+            "target-tip"
+          ],
+          "enumDescriptions": [
+            "Diff against the merge base of HEAD and the target (matches GitHub PR view; stable when the target branch advances).",
+            "Diff against the target branch tip (matches `git diff <target>`; shows reverse changes when the target advances)."
+          ],
+          "default": "merge-base",
+          "description": "How the Changed Files view computes the base side. 'merge-base' (default) mirrors GitHub PR semantics."
         }
       }
     }

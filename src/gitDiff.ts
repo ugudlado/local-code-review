@@ -1,16 +1,64 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { sessionStore } from "./sessionStore";
 
 const execFileAsync = promisify(execFile);
+
+export interface DiffLineStats {
+  additions: number;
+  deletions: number;
+}
 
 export interface LocalDiffResult {
   worktreePath: string;
   sourceBranch: string;
   targetBranch: string;
+  /** The ref actually passed to `git diff` (target tip or resolved merge-base SHA). */
+  baseRef: string;
   committedDiff: string;
   uncommittedDiff: string;
   allDiff: string;
+  /** Per-path line stats from `git diff --numstat` (matches `git diff --stat`). */
+  lineStats: Map<string, DiffLineStats>;
+}
+
+/**
+ * Resolve the "base" ref used as the old side of the diff.
+ *  - "merge-base": `git merge-base HEAD <target>` SHA — matches GitHub PR view,
+ *    stable when the target branch advances past the branch point.
+ *  - "target-tip": the target branch ref itself — matches `git diff <target>`.
+ *
+ * Falls back to the target ref if merge-base resolution fails (no common
+ * ancestor, shallow clone, etc.).
+ */
+export async function resolveDiffBaseRef(
+  workspaceRoot: string,
+  targetBranch: string,
+  mode: "merge-base" | "target-tip",
+): Promise<string> {
+  if (mode === "target-tip") return targetBranch;
+  try {
+    const sha = (
+      await gitExec(["merge-base", "HEAD", targetBranch], workspaceRoot)
+    ).trim();
+    return sha || targetBranch;
+  } catch {
+    return targetBranch;
+  }
+}
+
+/** Parse `git diff --numstat` output into a path → {additions, deletions} map. */
+export function parseDiffNumstat(stdout: string): Map<string, DiffLineStats> {
+  const stats = new Map<string, DiffLineStats>();
+  for (const line of stdout.trim().split("\n")) {
+    if (!line) continue;
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const additions = parts[0] === "-" ? 0 : Number(parts[0]) || 0;
+    const deletions = parts[1] === "-" ? 0 : Number(parts[1]) || 0;
+    const path = parts.slice(2).join("\t");
+    stats.set(path, { additions, deletions });
+  }
+  return stats;
 }
 
 async function gitExec(args: string[], cwd: string): Promise<string> {
@@ -39,27 +87,27 @@ async function gitExec(args: string[], cwd: string): Promise<string> {
 /**
  * Run git diff locally and return the same shape as the server's /api/diff endpoint.
  * Uses execFile (not exec) to avoid shell injection.
+ *
+ * Diff scope is controlled by `baseRef` (see `resolveDiffBaseRef`):
+ *  - merge-base SHA → mirrors GitHub PR view (`git diff <merge-base>`),
+ *    stable when the target branch advances past the branch point.
+ *  - target tip ref → `git diff <target>`, surfaces reverse changes when the
+ *    target advances.
+ *
+ * In both modes, untracked working-tree files are layered on top via synthetic
+ * `new file mode` headers so about-to-be-committed work shows up in review.
  */
 export async function getLocalDiff(
   workspaceRoot: string,
-  sessionId?: string,
-  defaultTargetBranch: string = "main",
+  targetBranch: string,
+  baseRef: string,
 ): Promise<LocalDiffResult> {
-  // Detect source branch
   const sourceBranch = (
     await gitExec(["rev-parse", "--abbrev-ref", "HEAD"], workspaceRoot)
   ).trim();
 
-  // Detect target branch from session file, fallback to configured default
-  let targetBranch = defaultTargetBranch;
-  if (sessionId) {
-    const session = await sessionStore.getSession(sessionId);
-    if (session?.targetBranch) {
-      targetBranch = session.targetBranch;
-    }
-  }
-
-  // Verify the target branch ref exists
+  // Verify the target branch ref exists (we still surface a clear error against
+  // the named branch even when the actual diff uses a merge-base SHA).
   try {
     await gitExec(["rev-parse", "--verify", targetBranch], workspaceRoot);
   } catch {
@@ -69,7 +117,8 @@ export async function getLocalDiff(
   // Force standard a/b prefixes regardless of diff.mnemonicprefix config
   const prefixArgs = ["--src-prefix=a/", "--dst-prefix=b/"];
 
-  // Committed diff: changes between target branch and HEAD
+  // Branch commits only — three-dot against the target branch tip is always
+  // the right semantic here regardless of diff base mode.
   const committedDiff = await gitExec(
     ["diff", ...prefixArgs, `${targetBranch}...HEAD`],
     workspaceRoot,
@@ -81,9 +130,9 @@ export async function getLocalDiff(
     workspaceRoot,
   );
 
-  // All diff: everything between target branch and working tree
-  const allDiff = await gitExec(
-    ["diff", ...prefixArgs, targetBranch],
+  // Full review scope: baseRef vs working tree
+  const baseVsWorkingTree = await gitExec(
+    ["diff", ...prefixArgs, baseRef],
     workspaceRoot,
   );
 
@@ -97,8 +146,6 @@ export async function getLocalDiff(
     .split("\n")
     .filter((f) => f.length > 0);
 
-  // Generate synthetic unified diff headers for untracked files
-  // so they appear as "Added" in the changed files tree
   const untrackedDiff = untrackedFiles
     .map(
       (f) =>
@@ -106,14 +153,22 @@ export async function getLocalDiff(
     )
     .join("\n");
 
-  const combinedDiff = untrackedDiff ? `${allDiff}\n${untrackedDiff}` : allDiff;
+  const allDiff = untrackedDiff
+    ? `${baseVsWorkingTree}\n${untrackedDiff}`
+    : baseVsWorkingTree;
+
+  const lineStats = parseDiffNumstat(
+    await gitExec(["diff", "--numstat", baseRef], workspaceRoot),
+  );
 
   return {
     worktreePath: workspaceRoot,
     sourceBranch,
     targetBranch,
+    baseRef,
     committedDiff,
     uncommittedDiff,
-    allDiff: combinedDiff,
+    allDiff,
+    lineStats,
   };
 }

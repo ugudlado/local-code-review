@@ -10,12 +10,12 @@ import {
   parseFileViewMode,
 } from "./changedFilesTree";
 import type { TreeNode } from "./changedFilesTree";
-import { DiffStatus, parseDiffFileList } from "./diffParser";
+import { applyLineStats, DiffStatus, parseDiffFileList } from "./diffParser";
 import type { DiffFileEntry } from "./diffParser";
 import { ReviewFileDecorationProvider } from "./fileDecorationProvider";
-import { getLocalDiff } from "./gitDiff";
-import type { SessionThread } from "./sessionStore";
-import { getDefaultTargetBranch } from "./config";
+import { getLocalDiff, resolveDiffBaseRef } from "./gitDiff";
+import { sessionStore, type SessionThread } from "./sessionStore";
+import { getConfiguredDiffBaseMode, getDefaultTargetBranch } from "./config";
 
 /** Minimal file identity needed for opening a diff — no stats required */
 type DiffFileRef = Pick<
@@ -38,6 +38,7 @@ export class DiffPanelManager implements vscode.Disposable {
   private _treeView: vscode.TreeView<TreeNode>;
   private _context: vscode.ExtensionContext;
   private _targetBranch: string | undefined;
+  private _suppressSelectionOpen = false;
 
   get treeProvider(): ChangedFilesTreeProvider {
     return this._treeProvider;
@@ -81,6 +82,14 @@ export class DiffPanelManager implements vscode.Disposable {
     this._treeView = vscode.window.createTreeView("resolvr.changedFiles", {
       treeDataProvider: this._treeProvider,
     });
+
+    this._treeView.onDidChangeSelection((e) => {
+      if (this._suppressSelectionOpen || e.selection.length === 0) return;
+      const node = e.selection[0];
+      if (node?.kind === "file") {
+        void this.openFile(node);
+      }
+    });
   }
 
   /** Toggle view mode: flat ↔ compact-tree. */
@@ -107,18 +116,22 @@ export class DiffPanelManager implements vscode.Disposable {
     this._decorationProvider.clear();
 
     try {
-      const defaultTarget = targetBranch ?? getDefaultTargetBranch();
-      this._targetBranch = defaultTarget;
-      const diff = await getLocalDiff(
+      const target = await this._resolveTargetBranch(sessionId, targetBranch);
+      this._targetBranch = target;
+      const mode = getConfiguredDiffBaseMode();
+      const baseRef = await resolveDiffBaseRef(
         this._workspaceRoot,
-        sessionId,
-        defaultTarget,
+        target,
+        mode,
       );
+      this._baseProvider.setBaseRef(baseRef);
+      const diff = await getLocalDiff(this._workspaceRoot, target, baseRef);
       this._files = parseDiffFileList(diff.allDiff);
+      applyLineStats(this._files, diff.lineStats);
 
       this._treeProvider.setFiles(this._files);
       this._decorationProvider.setFiles(this._files);
-      this._updateTitle();
+      this._updateTitle(mode, baseRef);
 
       void vscode.commands.executeCommand(
         "setContext",
@@ -126,8 +139,13 @@ export class DiffPanelManager implements vscode.Disposable {
         this._files.length > 0,
       );
 
+      const scopeLabel =
+        mode === "merge-base"
+          ? `${target}...HEAD (merge-base ${baseRef.slice(0, 7)})`
+          : target;
       this._outputChannel.appendLine(
-        `Diff tree populated${sessionId ? ` for ${sessionId}` : ""}: ${this._files.length} files`,
+        `Diff tree populated${sessionId ? ` for ${sessionId}` : ""}: ` +
+          `${this._files.length} files (git diff ${scopeLabel})`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -148,8 +166,13 @@ export class DiffPanelManager implements vscode.Disposable {
 
     const firstItem = this._treeProvider.getFirstFile();
     if (firstItem) {
-      void this._treeView.reveal(firstItem, { focus: true });
-      await this.openFile(firstItem);
+      this._suppressSelectionOpen = true;
+      try {
+        void this._treeView.reveal(firstItem, { focus: true, select: true });
+        await this.openFile(firstItem);
+      } finally {
+        this._suppressSelectionOpen = false;
+      }
     }
   }
 
@@ -159,22 +182,18 @@ export class DiffPanelManager implements vscode.Disposable {
 
     switch (file.status) {
       case DiffStatus.Deleted:
-        // Deleted file: old has content, new is empty
         oldUri = makeSchemeUri(SCHEME_BASE, file.oldPath);
         newUri = makeSchemeUri(SCHEME_EMPTY, file.oldPath);
         break;
       case DiffStatus.Added:
-        // New file: old is empty, new is working tree
         oldUri = makeSchemeUri(SCHEME_EMPTY, file.newPath);
         newUri = vscode.Uri.file(`${this._workspaceRoot}/${file.newPath}`);
         break;
       case DiffStatus.Renamed:
-        // Renamed: old path for base, new path for working tree
         oldUri = makeSchemeUri(SCHEME_BASE, file.oldPath);
         newUri = vscode.Uri.file(`${this._workspaceRoot}/${file.newPath}`);
         break;
       default:
-        // Modified: base content vs working tree
         oldUri = makeSchemeUri(SCHEME_BASE, file.path);
         newUri = vscode.Uri.file(`${this._workspaceRoot}/${file.path}`);
     }
@@ -184,14 +203,45 @@ export class DiffPanelManager implements vscode.Disposable {
         ? `${file.oldPath} → ${file.newPath} (Review Diff)`
         : `${file.path} (Review Diff)`;
 
-    await vscode.commands.executeCommand("vscode.diff", oldUri, newUri, title);
+    await vscode.commands.executeCommand("vscode.diff", oldUri, newUri, title, {
+      preview: false,
+    });
   }
 
-  private _updateTitle(): void {
+  /**
+   * Target for diffs: explicit argument > session file > VS Code setting.
+   * Never silently prefer a stale session target over a caller-provided value.
+   */
+  private async _resolveTargetBranch(
+    sessionId?: string,
+    explicitTarget?: string,
+  ): Promise<string> {
+    if (explicitTarget) return explicitTarget;
+    if (sessionId) {
+      const session = await sessionStore.getSession(sessionId);
+      if (session?.targetBranch) return session.targetBranch;
+    }
+    return getDefaultTargetBranch();
+  }
+
+  private _updateTitle(
+    mode?: "merge-base" | "target-tip",
+    baseRef?: string,
+  ): void {
     this._treeView.title = `Resolvr: Changed Files (${this._files.length})`;
-    this._treeView.description = this._targetBranch
-      ? `vs ${this._targetBranch}`
-      : undefined;
+    if (!this._targetBranch) {
+      this._treeView.description = undefined;
+      return;
+    }
+    const scope =
+      mode === "merge-base"
+        ? `${this._targetBranch}...HEAD`
+        : this._targetBranch;
+    this._treeView.description = `git diff ${scope}`;
+    this._treeView.message =
+      mode === "merge-base" && baseRef
+        ? `merge-base: ${baseRef.slice(0, 7)}`
+        : undefined;
   }
 
   async refresh(sessionId?: string, targetBranch?: string): Promise<void> {

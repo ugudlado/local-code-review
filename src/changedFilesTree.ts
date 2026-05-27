@@ -314,11 +314,13 @@ export class ChangedFilesTreeProvider
 
     item.resourceUri = makeReviewFileUri(element.path);
 
-    // Build description — in tree modes, skip directory path (already shown by folder hierarchy)
     const parts: string[] = [];
 
     if (this._mode === "flat" && element.path.includes("/")) {
       parts.push(element.path.slice(0, element.path.lastIndexOf("/")));
+    } else if (this._mode === "compact-tree") {
+      // Full path avoids misreading compact folder labels (e.g. scripts/lib vs scripts/tests)
+      parts.push(element.path);
     }
 
     if (element.additions + element.deletions > 0) {
@@ -337,11 +339,7 @@ export class ChangedFilesTreeProvider
       new vscode.ThemeColor(STATUS_COLORS[element.status]),
     );
 
-    item.command = {
-      command: "resolvr.openDiffFile",
-      title: "Open Diff",
-      arguments: [element],
-    };
+    // Diff opens via DiffPanelManager tree selection handler (keeps editor in sync)
 
     const statusLabel = STATUS_LABELS[element.status];
     const tooltipLines = [`${statusLabel}: ${element.path}`];

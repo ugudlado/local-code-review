@@ -148,7 +148,9 @@ export function activate(context: vscode.ExtensionContext): void {
     return override ?? getDefaultTargetBranch();
   };
 
-  // Sync baseProvider and branchDetector when the target branch setting changes
+  // Sync diff tree when target-branch or diff-base settings change.
+  // baseProvider.setBaseRef is driven by diffPanelManager.populate(), so we
+  // re-init through that path instead of setting it directly here.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("resolvr.defaultTargetBranch")) {
@@ -156,9 +158,14 @@ export function activate(context: vscode.ExtensionContext): void {
         outputChannel.appendLine(
           `Target branch setting changed to "${newTarget}"`,
         );
-        baseProvider.setTargetBranch(newTarget);
         // Re-detect in case current branch now matches the new default
         void branchDetector.initialize();
+      }
+      if (e.affectsConfiguration("resolvr.diffBase")) {
+        outputChannel.appendLine(
+          `Diff base mode changed — refreshing diff tree`,
+        );
+        void diffPanelManager.refresh(currentSessionId ?? undefined);
       }
     }),
   );
@@ -266,7 +273,6 @@ export function activate(context: vscode.ExtensionContext): void {
   /** Populate the Changed Files tree — no session file required. */
   const populateDiffs = async (sessionId?: string) => {
     const targetBranch = resolveTargetBranch();
-    baseProvider.setTargetBranch(targetBranch);
     await diffPanelManager.populate(sessionId, targetBranch);
     // Show "ready" with 0 threads — branch is active, just no session yet
     statusBar.setReady(0);
@@ -281,10 +287,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const session = await sessionStore.getSession(sessionId);
       if (!session) return;
 
-      // Re-hydrate baseProvider from session's persisted target branch
-      if (session.targetBranch) {
-        baseProvider.setTargetBranch(session.targetBranch);
-      }
+      // baseProvider's ref is set via diffPanelManager.populate() below,
+      // which resolves it against the session's persisted target branch.
 
       const threads = session.threads ?? [];
       const openThreads = threads.filter(
@@ -620,8 +624,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await context.workspaceState.update("targetBranchOverride", newTarget);
       }
 
-      // Update base content provider and refresh diff
-      baseProvider.setTargetBranch(newTarget);
+      // refresh() resolves base ref and updates the content provider
       await diffPanelManager.refresh(sessionId ?? undefined, newTarget);
 
       void vscode.window.showInformationMessage(
