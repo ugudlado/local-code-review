@@ -1,16 +1,22 @@
 # Resolvr — Architecture
 
-A 3.5K-LOC VS Code extension organized as three explicit layers behind a thin
-activation entry. No DI container, no service locator — plain constructors and
-a `deps` object.
+A 3.5K-LOC VS Code extension organized as four named layers. No DI container,
+no service locator — plain constructors and a `deps` object.
 
 ## Layers
 
-| Layer             | Imports `vscode`? | Imports `fs` / `child_process`? | Tested                        |
-| ----------------- | ----------------- | ------------------------------- | ----------------------------- |
-| **Pure**          | No                | No                              | Vitest, no mocks              |
-| **IO**            | No                | Yes                             | Vitest against a tmp git repo |
-| **VS Code-bound** | Yes               | varies                          | Integration / F5 only         |
+Each layer has one job and a one-line rule of thumb you can hold in your head:
+
+| Layer                | What lives here                                                           | Rule                                                                                     |
+| -------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 🔌 **Glue**          | `extension.ts`, `activation/lifecycle.ts`, `activation/commands.ts`       | "Wires the other three together at startup. Owns nothing of its own."                    |
+| 🪟 **UI**            | trees, comments, status bar, file watchers, branch detector, virtual docs | "Imports `vscode`. Reacts to user actions and editor events."                            |
+| 💾 **Storage & Git** | `SessionStore`, `gitDiff`, `SkillGenerator`, `agentInvoker`               | "Reads/writes files or shells out to git. No `vscode`."                                  |
+| 🧮 **Logic**         | `git.ts`, `diffParser`, `threadMapper`, `config`                          | "Pure functions. No `fs`, no `vscode`, no side effects. Tested in vitest with no mocks." |
+
+A module's layer is detectable mechanically: grep for `import vscode` (UI),
+`fs`/`child_process` (Storage & Git), or neither (Logic). The Glue layer is
+the only one that imports from all three.
 
 Construction lives in `extension.ts`. The activation entry only does:
 
@@ -35,13 +41,13 @@ flowchart TB
 
   EXT["<b>extension.ts</b> — activate()<br/><i>constructs all boxes below<br/>(construction edges omitted)</i>"]
 
-  subgraph ACT[" "]
+  subgraph GLUE["🔌 Glue — wires everything at startup"]
     direction LR
     LIFE["<b>lifecycle.ts</b><br/>owns _currentSessionId<br/>init / hydrate / subscribe"]
-    CMDS["<b>commands.ts</b><br/>registerCommands(deps)"]
+    CMDS["<b>commands.ts</b><br/>registerCommands(deps)<br/>all resolvr.* handlers"]
   end
 
-  subgraph UI["UI services (vscode-bound)"]
+  subgraph UI["🪟 UI — what the user sees &amp; does"]
     direction LR
     CM["CommentManager"]
     DPM["DiffPanelManager"]
@@ -52,7 +58,7 @@ flowchart TB
     BCP["BaseContentProvider"]
   end
 
-  subgraph IOL["IO (no vscode)"]
+  subgraph STORE["💾 Storage &amp; Git — the persistent world"]
     direction LR
     SS["<b>SessionStore</b><br/>ensureSession + CRUD"]
     GD["gitDiff.ts<br/>getLocalDiff"]
@@ -60,7 +66,7 @@ flowchart TB
     AI["agentInvoker"]
   end
 
-  subgraph PURE["Pure (vitest-tested)"]
+  subgraph LOGIC["🧮 Logic — pure functions, no side effects"]
     direction LR
     GIT["git.ts<br/>git(args, cwd)"]
     DP["diffParser.ts"]
@@ -68,7 +74,7 @@ flowchart TB
     CFG["config.ts"]
   end
 
-  EXT --> ACT
+  EXT --> GLUE
 
   LIFE --> UI
   LIFE --> SS

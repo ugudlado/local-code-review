@@ -83,15 +83,18 @@ Press **F5** in VS Code to launch the Extension Development Host for testing. Th
 - **File watching**: `vscode.workspace.createFileSystemWatcher` for live session updates
 - **AI resolution**: "Resolve with AI" command spawns configured coding agent via terminal
 
-### Layers (testability)
+### Layers
 
-The codebase is organized in three implicit layers — keep new code in the right one:
+The codebase is four named layers — see [`docs/architecture.md`](docs/architecture.md) for the diagram. Keep new code in the right one:
 
-1. **Pure** (no `vscode`, no `fs`, no `execFile`): `diffParser.ts`, `threadMapper.ts`, helpers in `gitDiff.ts` (`parseDiffNumstat`, `applyLineStats`). Unit-testable with vitest — see `*.test.ts`.
-2. **IO** (`fs` / `child_process`, no `vscode`): `sessionStore.ts`, exec parts of `gitDiff.ts`, `sessionWatcher.ts` primitives. Testable with tmpdirs and real git, no VS Code host.
-3. **VS Code-bound**: trees, comment controller, status bar, activation entry. Integration-only; keep thin.
+1. 🔌 **Glue** — `extension.ts` + `activation/{lifecycle,commands}.ts`. Wires everything at startup. Owns no behaviour of its own.
+2. 🪟 **UI** — `vscode`-bound: trees, comments, status bar, watchers, branch detector, virtual docs. Reacts to user actions and editor events.
+3. 💾 **Storage & Git** — `SessionStore`, `gitDiff`, `SkillGenerator`, `agentInvoker`. Reads/writes files or shells out to git. **No `vscode` import.**
+4. 🧮 **Logic** — `git.ts`, `diffParser`, `threadMapper`, `config`. Pure functions, no side effects. Tested in vitest with no mocks.
 
-Construction lives in `extension.ts`. Dependencies are passed in via constructor or a `deps` object — there is no DI container and no service locator. The `activation/` folder owns command bodies and the init/branch-change lifecycle.
+Detect a module's layer mechanically: `grep -l "from \"vscode\"" src/<file>` (UI), `grep -l "child_process\|^import.*fs" src/<file>` (Storage & Git), or neither (Logic). Glue is the only layer that imports across all three.
+
+Construction lives in `extension.ts`. Dependencies are passed in via constructor or a `deps` object — there is no DI container and no service locator.
 
 ## Settings
 
