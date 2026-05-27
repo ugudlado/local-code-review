@@ -1,6 +1,4 @@
 import * as vscode from "vscode";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import * as path from "path";
 import { BranchDetector } from "./branchDetector";
 import { SessionStore } from "./sessionStore";
@@ -19,8 +17,7 @@ import { DiffPanelManager } from "./diffPanelManager";
 import { ThreadsTreeProvider } from "./threadsTree";
 import { getDefaultTargetBranch } from "./config";
 import { registerCommands } from "./activation/commands";
-
-const execFileAsync = promisify(execFile);
+import { createLifecycle } from "./activation/lifecycle";
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel("Resolvr");
@@ -240,142 +237,22 @@ export function activate(context: vscode.ExtensionContext): void {
     { dispose: () => refreshTimer && clearTimeout(refreshTimer) },
   );
 
-  // Resolve workspace name from git repo root (handles worktrees).
-  const resolveWorkspace = async () => {
-    try {
-      const { stdout } = await execFileAsync(
-        "git",
-        ["rev-parse", "--git-common-dir"],
-        { cwd: workspaceRoot },
-      );
-      const gitCommonDir = path.resolve(workspaceRoot, stdout.trim());
-      const repoName = path.basename(path.dirname(gitCommonDir));
-      sessionStore.setWorkspaceName(repoName);
-      outputChannel.appendLine(`Workspace resolved: ${repoName}`);
-    } catch {
-      const fallback = path.basename(workspaceRoot);
-      sessionStore.setWorkspaceName(fallback);
-      outputChannel.appendLine(`Workspace fallback: ${fallback}`);
-    }
-  };
-
-  /** Populate the Changed Files tree — no session file required. */
-  const populateDiffs = async (sessionId?: string) => {
-    const targetBranch = resolveTargetBranch();
-    await diffPanelManager.populate(sessionId, targetBranch);
-    // Show "ready" with 0 threads — branch is active, just no session yet
-    statusBar.setReady(0);
-    outputChannel.appendLine(
-      `Diffs populated (target: ${targetBranch}, session: ${sessionId ?? "none"})`,
-    );
-  };
-
-  /** Hydrate session-dependent features — only call when session file exists. */
-  const hydrateSession = async (sessionId: string) => {
-    try {
-      const session = await sessionStore.getSession(sessionId);
-      if (!session) return;
-
-      // baseProvider's ref is set via diffPanelManager.populate() below,
-      // which resolves it against the session's persisted target branch.
-
-      const threads = session.threads ?? [];
-      const openThreads = threads.filter(
-        (t: SessionThread) => t.status === "open",
-      ).length;
-      commentManager.loadThreads(threads);
-      statusBar.setReady(threads.length, openThreads);
-      threadsTree.updateThreads(threads);
-      outputChannel.appendLine(
-        `Session loaded: ${threads.length} threads (${openThreads} open)`,
-      );
-
-      // Start watching the session file for external changes
-      sessionWatcher.watch(sessionStore.getSessionFilePath(sessionId));
-
-      // Refresh diff tree with session's target branch and overlay thread counts
-      await diffPanelManager.populate(sessionId);
-      diffPanelManager.updateThreadCounts(threads);
-
-      // Generate agent skill files (.review/AGENTS.md, .review/CLAUDE.md)
-      try {
-        const skillContext = await skillGenerator.buildContext(
-          sessionId,
-          sessionStore.getSessionFilePath(sessionId),
-          session,
-        );
-        await skillGenerator.generate(skillContext, session);
-        outputChannel.appendLine(`Agent skill files generated in .review/`);
-      } catch (skillErr) {
-        outputChannel.appendLine(
-          `Skill generation failed: ${skillErr instanceof Error ? skillErr.message : String(skillErr)}`,
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      outputChannel.appendLine(
-        `Failed to load session for ${sessionId}: ${msg}`,
-      );
-      void vscode.window.showErrorMessage(
-        `Resolvr: Failed to load review session — ${msg}`,
-      );
-    }
-  };
-
-  // Initialize feature detection
-  const init = async () => {
-    await resolveWorkspace();
-    const sessionId = await branchDetector.initialize();
-    sessionTracker.current = sessionId;
-
-    if (!sessionId) {
-      statusBar.setNoBranch();
-      outputChannel.appendLine(
-        "On default branch — populating working-tree diffs",
-      );
-      // Still populate diffs so working-tree changes are visible on main/master
-      await populateDiffs();
-      return;
-    }
-
-    outputChannel.appendLine(`Working branch detected: ${sessionId}`);
-
-    // Always populate diffs — no session required
-    await populateDiffs(sessionId);
-
-    // Hydrate session-dependent features only if session file exists
-    const existingSession = await sessionStore.getSession(sessionId);
-    if (existingSession) {
-      await hydrateSession(sessionId);
-    }
-  };
-
-  // Listen for branch changes
-  branchDetector.onDidChangeBranch(async (newSessionId) => {
-    outputChannel.appendLine(
-      `Branch changed — session: ${newSessionId ?? "none"}`,
-    );
-    sessionTracker.current = newSessionId;
-    sessionWatcher.unwatch();
-
-    if (!newSessionId) {
-      commentManager.loadThreads([]);
-      threadsTree.updateThreads([]);
-      statusBar.setNoBranch();
-      // On default branch — show working-tree diffs instead of closing the panel
-      await populateDiffs();
-      return;
-    }
-
-    // Always populate diffs — no session required
-    await populateDiffs(newSessionId);
-
-    // Hydrate session-dependent features only if session file exists
-    const existingSession = await sessionStore.getSession(newSessionId);
-    if (existingSession) {
-      await hydrateSession(newSessionId);
-    }
+  const { init, hydrateSession, subscribeBranchChanges } = createLifecycle({
+    outputChannel,
+    workspaceRoot,
+    sessionStore,
+    branchDetector,
+    commentManager,
+    diffPanelManager,
+    sessionWatcher,
+    skillGenerator,
+    statusBar,
+    threadsTree,
+    sessionTracker,
+    resolveTargetBranch,
   });
+
+  subscribeBranchChanges();
 
   registerCommands({
     context,
