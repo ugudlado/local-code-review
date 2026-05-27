@@ -19,6 +19,23 @@ export interface DiffFileEntry {
   deletions: number; // lines removed (from hunk content)
 }
 
+/** Apply `git diff --numstat` counts so tree stats match `git diff --stat`. */
+export function applyLineStats(
+  entries: DiffFileEntry[],
+  lineStats: Map<string, { additions: number; deletions: number }>,
+): void {
+  for (const entry of entries) {
+    const stats =
+      lineStats.get(entry.path) ??
+      lineStats.get(entry.newPath) ??
+      lineStats.get(entry.oldPath);
+    if (stats) {
+      entry.additions = stats.additions;
+      entry.deletions = stats.deletions;
+    }
+  }
+}
+
 export function parseDiffFileList(unifiedDiff: string): DiffFileEntry[] {
   if (!unifiedDiff.trim()) return [];
 
@@ -26,9 +43,8 @@ export function parseDiffFileList(unifiedDiff: string): DiffFileEntry[] {
   const entries: DiffFileEntry[] = [];
 
   for (const block of blocks) {
-    // Parse "a/<old> b/<new>" from first line
-    // Greedy first group: captures everything up to the last " b/"
-    const headerMatch = block.match(/^a\/(.+) b\/(.+)$/m);
+    // Parse "a/<old> b/<new>" — non-greedy first group so paths with " b/" work
+    const headerMatch = block.match(/^a\/(.+?) b\/(.+)$/m);
     if (!headerMatch) continue;
 
     const oldPath = headerMatch[1];
@@ -52,8 +68,9 @@ export function parseDiffFileList(unifiedDiff: string): DiffFileEntry[] {
       else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
     }
 
+    const path = status === DiffStatus.Deleted ? oldPath : newPath;
     entries.push({
-      path: status === DiffStatus.Deleted ? oldPath : newPath,
+      path,
       oldPath,
       newPath,
       status,
@@ -62,5 +79,16 @@ export function parseDiffFileList(unifiedDiff: string): DiffFileEntry[] {
     });
   }
 
-  return entries;
+  // Prefer the entry with real hunks when paths collide (e.g. untracked synthetic header)
+  const byPath = new Map<string, DiffFileEntry>();
+  for (const entry of entries) {
+    const prev = byPath.get(entry.path);
+    if (
+      !prev ||
+      entry.additions + entry.deletions > prev.additions + prev.deletions
+    ) {
+      byPath.set(entry.path, entry);
+    }
+  }
+  return [...byPath.values()];
 }
