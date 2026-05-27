@@ -283,6 +283,8 @@
     "watch": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.js --external:vscode --watch",
     "package": "vsce package --no-dependencies",
     "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "prettier --write src/**/*.ts",
     "prepare": "husky",
     "knip": "knip",
@@ -305,6 +307,7 @@
     "knip": "^5.86.0",
     "lint-staged": "^16.2.7",
     "prettier": "^3.5.3",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "vitest": "^4.1.7"
   }
 }

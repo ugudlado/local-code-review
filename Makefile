@@ -1,4 +1,4 @@
-.PHONY: build watch type-check package install format knip knip-fix clean dev deps
+.PHONY: build watch type-check test test-watch package install format knip knip-fix clean dev deps
 
 ## Deps
 
@@ -19,6 +19,12 @@ watch: node_modules ## Watch mode for development
 type-check: node_modules ## TypeScript type checking
 	pnpm type-check
 
+test: node_modules ## Run vitest unit tests (pure layer)
+	pnpm test
+
+test-watch: node_modules ## Vitest in watch mode
+	pnpm test:watch
+
 package: build  ## Package .vsix (builds first)
 	pnpm package
 
@@ -38,7 +44,7 @@ knip-fix: node_modules ## Auto-remove safe unused exports
 
 ## Shortcuts
 
-dev: type-check build ## Type-check then build
+dev: type-check test build ## Type-check, test, then build
 	@echo "Ready"
 
 clean:          ## Remove build artifacts
