@@ -1,8 +1,5 @@
 import * as vscode from "vscode";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const execFileAsync = promisify(execFile);
+import { git } from "./git";
 
 /**
  * Provides old-side file content for diff editors via a virtual document scheme.
@@ -45,10 +42,9 @@ export class BaseContentProvider
     if (cached !== undefined) return cached;
 
     try {
-      const { stdout } = await execFileAsync(
-        "git",
+      const stdout = await git(
         ["show", `${this._baseRef}:${relativePath}`],
-        { cwd: this._workspaceRoot, maxBuffer: 10 * 1024 * 1024 },
+        this._workspaceRoot,
       );
       this._cache.set(relativePath, stdout);
       return stdout;

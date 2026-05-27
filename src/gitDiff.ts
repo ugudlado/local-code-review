@@ -1,7 +1,4 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const execFileAsync = promisify(execFile);
+import { git } from "./git";
 
 export interface DiffLineStats {
   additions: number;
@@ -38,7 +35,7 @@ export async function resolveDiffBaseRef(
   if (mode === "target-tip") return targetBranch;
   try {
     const sha = (
-      await gitExec(["merge-base", "HEAD", targetBranch], workspaceRoot)
+      await git(["merge-base", "HEAD", targetBranch], workspaceRoot)
     ).trim();
     return sha || targetBranch;
   } catch {
@@ -61,29 +58,6 @@ export function parseDiffNumstat(stdout: string): Map<string, DiffLineStats> {
   return stats;
 }
 
-async function gitExec(args: string[], cwd: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", args, {
-      cwd,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return stdout;
-  } catch (err) {
-    // git diff exits with code 1 when there ARE differences — that's normal
-    const execErr = err as {
-      stdout?: string;
-      code?: number;
-      stderr?: string;
-    };
-    if (execErr.code === 1 && execErr.stdout !== undefined) {
-      return execErr.stdout;
-    }
-    throw new Error(
-      `git ${args[0]} failed (exit ${execErr.code ?? "unknown"}): ${execErr.stderr ?? String(err)}`,
-    );
-  }
-}
-
 /**
  * Run git diff locally and return the same shape as the server's /api/diff endpoint.
  * Uses execFile (not exec) to avoid shell injection.
@@ -103,13 +77,13 @@ export async function getLocalDiff(
   baseRef: string,
 ): Promise<LocalDiffResult> {
   const sourceBranch = (
-    await gitExec(["rev-parse", "--abbrev-ref", "HEAD"], workspaceRoot)
+    await git(["rev-parse", "--abbrev-ref", "HEAD"], workspaceRoot)
   ).trim();
 
   // Verify the target branch ref exists (we still surface a clear error against
   // the named branch even when the actual diff uses a merge-base SHA).
   try {
-    await gitExec(["rev-parse", "--verify", targetBranch], workspaceRoot);
+    await git(["rev-parse", "--verify", targetBranch], workspaceRoot);
   } catch {
     throw new Error(`Target branch "${targetBranch}" not found`);
   }
@@ -119,25 +93,25 @@ export async function getLocalDiff(
 
   // Branch commits only — three-dot against the target branch tip is always
   // the right semantic here regardless of diff base mode.
-  const committedDiff = await gitExec(
+  const committedDiff = await git(
     ["diff", ...prefixArgs, `${targetBranch}...HEAD`],
     workspaceRoot,
   );
 
   // Uncommitted diff: staged + unstaged vs HEAD
-  const uncommittedDiff = await gitExec(
+  const uncommittedDiff = await git(
     ["diff", ...prefixArgs, "HEAD"],
     workspaceRoot,
   );
 
   // Full review scope: baseRef vs working tree
-  const baseVsWorkingTree = await gitExec(
+  const baseVsWorkingTree = await git(
     ["diff", ...prefixArgs, baseRef],
     workspaceRoot,
   );
 
   // Untracked files: new files not yet git-added
-  const untrackedRaw = await gitExec(
+  const untrackedRaw = await git(
     ["ls-files", "--others", "--exclude-standard"],
     workspaceRoot,
   );
@@ -158,7 +132,7 @@ export async function getLocalDiff(
     : baseVsWorkingTree;
 
   const lineStats = parseDiffNumstat(
-    await gitExec(["diff", "--numstat", baseRef], workspaceRoot),
+    await git(["diff", "--numstat", baseRef], workspaceRoot),
   );
 
   return {

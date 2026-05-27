@@ -1,10 +1,7 @@
 import * as vscode from "vscode";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import * as path from "path";
 import { getDefaultTargetBranch } from "./config";
-
-const execFileAsync = promisify(execFile);
+import { git } from "./git";
 
 const BASE_DEFAULT_BRANCHES = new Set(["main", "master", "HEAD"]);
 
@@ -50,12 +47,9 @@ export class BranchDetector implements vscode.Disposable {
 
   private async _detect(): Promise<void> {
     try {
-      const { stdout } = await execFileAsync(
-        "git",
+      const stdout = await git(
         ["rev-parse", "--abbrev-ref", "HEAD"],
-        {
-          cwd: this._workspaceRoot,
-        },
+        this._workspaceRoot,
       );
       const branch = stdout.trim();
       const configuredTarget = getDefaultTargetBranch();
@@ -74,13 +68,7 @@ export class BranchDetector implements vscode.Disposable {
   private async _startWatching(): Promise<void> {
     try {
       // Find the actual .git directory (handles worktrees where .git is a file)
-      const { stdout } = await execFileAsync(
-        "git",
-        ["rev-parse", "--git-dir"],
-        {
-          cwd: this._workspaceRoot,
-        },
-      );
+      const stdout = await git(["rev-parse", "--git-dir"], this._workspaceRoot);
       const gitDir = path.resolve(this._workspaceRoot, stdout.trim());
       const headPath = path.join(gitDir, "HEAD");
 

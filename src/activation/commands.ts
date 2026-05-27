@@ -1,6 +1,4 @@
 import * as vscode from "vscode";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import type { BranchDetector } from "../branchDetector";
 import type { DiffPanelManager } from "../diffPanelManager";
 import type { SessionStore, SessionThread } from "../sessionStore";
@@ -10,8 +8,7 @@ import {
   resolveInExistingTerminal,
   resolveWithNewAgent,
 } from "../agentInvoker";
-
-const execFileAsync = promisify(execFile);
+import { listBranchesViaCli } from "../git";
 
 // Minimal types for the VS Code built-in Git extension API.
 interface GitExtensionAPI {
@@ -36,8 +33,6 @@ export interface CommandDeps {
   branchDetector: BranchDetector;
   diffPanelManager: DiffPanelManager;
   skillGenerator: SkillGenerator;
-  /** Mutable holder for the current branch's sessionId (null on default branches). */
-  sessionTracker: { current: string | null };
   /** Resolved target branch (workspace-state override > config). */
   resolveTargetBranch: () => string;
   /** Full re-initialization (used by the refresh command). */
@@ -56,7 +51,6 @@ export function registerCommands(deps: CommandDeps): void {
     branchDetector,
     diffPanelManager,
     skillGenerator,
-    sessionTracker,
     resolveTargetBranch,
     init,
     hydrateSession,
@@ -101,7 +95,6 @@ export function registerCommands(deps: CommandDeps): void {
 
       try {
         sessionStore.saveSession(sessionId, session);
-        sessionTracker.current = sessionId;
         await hydrateSession(sessionId);
         outputChannel.appendLine("Review session created");
         void vscode.window.showInformationMessage(
@@ -362,15 +355,5 @@ async function listBranches(workspaceRoot: string): Promise<string[]> {
     // Fall through to CLI.
   }
 
-  try {
-    const { stdout } = await execFileAsync("git", ["branch", "-a"], {
-      cwd: workspaceRoot,
-    });
-    return stdout
-      .split("\n")
-      .map((l) => l.replace(/^\*?\s+/, "").trim())
-      .filter((l) => l.length > 0 && !l.includes("->"));
-  } catch {
-    return [];
-  }
+  return listBranchesViaCli(workspaceRoot);
 }
