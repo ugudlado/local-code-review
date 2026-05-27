@@ -14,7 +14,7 @@ import { applyLineStats, DiffStatus, parseDiffFileList } from "./diffParser";
 import type { DiffFileEntry } from "./diffParser";
 import { ReviewFileDecorationProvider } from "./fileDecorationProvider";
 import { getLocalDiff, resolveDiffBaseRef } from "./gitDiff";
-import { sessionStore, type SessionThread } from "./sessionStore";
+import type { SessionStore, SessionThread } from "./sessionStore";
 import { getConfiguredDiffBaseMode, getDefaultTargetBranch } from "./config";
 
 /** Minimal file identity needed for opening a diff — no stats required */
@@ -37,6 +37,7 @@ export class DiffPanelManager implements vscode.Disposable {
   private _outputChannel: vscode.OutputChannel;
   private _treeView: vscode.TreeView<TreeNode>;
   private _context: vscode.ExtensionContext;
+  private _sessionStore: SessionStore;
   private _targetBranch: string | undefined;
   private _suppressSelectionOpen = false;
 
@@ -57,11 +58,13 @@ export class DiffPanelManager implements vscode.Disposable {
     baseProvider: BaseContentProvider,
     outputChannel: vscode.OutputChannel,
     context: vscode.ExtensionContext,
+    sessionStore: SessionStore,
   ) {
     this._workspaceRoot = workspaceRoot;
     this._baseProvider = baseProvider;
     this._outputChannel = outputChannel;
     this._context = context;
+    this._sessionStore = sessionStore;
     this._treeProvider = new ChangedFilesTreeProvider();
     this._decorationProvider = new ReviewFileDecorationProvider();
     this._decorationDisposable = vscode.window.registerFileDecorationProvider(
@@ -218,7 +221,7 @@ export class DiffPanelManager implements vscode.Disposable {
   ): Promise<string> {
     if (explicitTarget) return explicitTarget;
     if (sessionId) {
-      const session = await sessionStore.getSession(sessionId);
+      const session = await this._sessionStore.getSession(sessionId);
       if (session?.targetBranch) return session.targetBranch;
     }
     return getDefaultTargetBranch();

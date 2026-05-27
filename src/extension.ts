@@ -3,13 +3,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import * as path from "path";
 import { BranchDetector } from "./branchDetector";
-import {
-  sessionStore,
-  setWorkspaceRoot,
-  setWorkspaceName,
-  setOnBeforeWrite,
-  getSessionFilePath,
-} from "./sessionStore";
+import { SessionStore } from "./sessionStore";
 import type { SessionThread } from "./sessionStore";
 import { SkillGenerator } from "./skillGenerator";
 import { resolveInExistingTerminal, resolveWithNewAgent } from "./agentInvoker";
@@ -76,17 +70,27 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const statusBar = new StatusBar();
   const branchDetector = new BranchDetector(workspaceRoot);
-  const commentManager = new CommentManager(workspaceRoot, outputChannel);
   const sessionWatcher = new SessionWatcher(outputChannel);
 
-  // Wire file watcher suppression into sessionStore — every write suppresses the echo
-  setOnBeforeWrite(() => sessionWatcher.suppressNextChange());
+  // Single source of truth for session file IO. Every write fires
+  // onBeforeWrite so the file watcher can suppress its own echo.
+  const sessionStore = new SessionStore({
+    workspaceRoot,
+    onBeforeWrite: () => sessionWatcher.suppressNextChange(),
+  });
+
+  const commentManager = new CommentManager(
+    workspaceRoot,
+    outputChannel,
+    sessionStore,
+  );
 
   const diffPanelManager = new DiffPanelManager(
     workspaceRoot,
     baseProvider,
     outputChannel,
     context,
+    sessionStore,
   );
 
   const skillGenerator = new SkillGenerator(workspaceRoot);
@@ -252,7 +256,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Resolve workspace name from git repo root (handles worktrees).
   const resolveWorkspace = async () => {
-    setWorkspaceRoot(workspaceRoot);
     try {
       const { stdout } = await execFileAsync(
         "git",
@@ -261,11 +264,11 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       const gitCommonDir = path.resolve(workspaceRoot, stdout.trim());
       const repoName = path.basename(path.dirname(gitCommonDir));
-      setWorkspaceName(repoName);
+      sessionStore.setWorkspaceName(repoName);
       outputChannel.appendLine(`Workspace resolved: ${repoName}`);
     } catch {
       const fallback = path.basename(workspaceRoot);
-      setWorkspaceName(fallback);
+      sessionStore.setWorkspaceName(fallback);
       outputChannel.appendLine(`Workspace fallback: ${fallback}`);
     }
   };
@@ -302,7 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
 
       // Start watching the session file for external changes
-      sessionWatcher.watch(getSessionFilePath(sessionId));
+      sessionWatcher.watch(sessionStore.getSessionFilePath(sessionId));
 
       // Refresh diff tree with session's target branch and overlay thread counts
       await diffPanelManager.populate(sessionId);
@@ -312,7 +315,7 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         const skillContext = await skillGenerator.buildContext(
           sessionId,
-          getSessionFilePath(sessionId),
+          sessionStore.getSessionFilePath(sessionId),
           session,
         );
         await skillGenerator.generate(skillContext, session);
@@ -669,14 +672,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (choice.mode === "existing") {
         await resolveInExistingTerminal(
-          getSessionFilePath(sessionId),
+          sessionStore.getSessionFilePath(sessionId),
           session,
           workspaceRoot,
           outputChannel,
         );
       } else {
         resolveWithNewAgent(
-          getSessionFilePath(sessionId),
+          sessionStore.getSessionFilePath(sessionId),
           session,
           workspaceRoot,
           outputChannel,
@@ -697,7 +700,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const session = await sessionStore.getSession(sessionId);
         const skillContext = await skillGenerator.buildContext(
           sessionId,
-          getSessionFilePath(sessionId),
+          sessionStore.getSessionFilePath(sessionId),
           session,
         );
         await skillGenerator.generate(skillContext, session);

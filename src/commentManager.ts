@@ -4,8 +4,8 @@ import type {
   SessionData,
   SessionThread,
   SessionMessage,
+  SessionStore,
 } from "./sessionStore";
-import { sessionStore } from "./sessionStore";
 import { ThreadMapper } from "./threadMapper";
 import { SCHEME_BASE } from "./baseContentProvider";
 import { getDefaultTargetBranch } from "./config";
@@ -34,6 +34,7 @@ export class CommentManager implements vscode.Disposable {
   private _threadMapper: ThreadMapper;
   private _workspaceRoot: string;
   private _outputChannel: vscode.OutputChannel;
+  private _sessionStore: SessionStore;
   private _lastThreads: SessionThread[] = [];
   private _visible = true;
 
@@ -41,9 +42,14 @@ export class CommentManager implements vscode.Disposable {
     return this._threadMapper;
   }
 
-  constructor(workspaceRoot: string, outputChannel: vscode.OutputChannel) {
+  constructor(
+    workspaceRoot: string,
+    outputChannel: vscode.OutputChannel,
+    sessionStore: SessionStore,
+  ) {
     this._workspaceRoot = workspaceRoot;
     this._outputChannel = outputChannel;
+    this._sessionStore = sessionStore;
     this._threadMapper = new ThreadMapper();
     this._controller = vscode.comments.createCommentController(
       "resolvr",
@@ -102,7 +108,7 @@ export class CommentManager implements vscode.Disposable {
   ): Promise<void> {
     let existing: SessionData | null;
     try {
-      existing = await sessionStore.getSession(sessionId);
+      existing = await this._sessionStore.getSession(sessionId);
     } catch (err) {
       // Session file exists but is unreadable — do not overwrite
       throw new Error(
@@ -123,7 +129,7 @@ export class CommentManager implements vscode.Disposable {
         updatedAt: new Date().toISOString(),
       },
     };
-    sessionStore.saveSession(sessionId, session);
+    this._sessionStore.saveSession(sessionId, session);
     this._outputChannel.appendLine(
       `Auto-created review session for ${sessionId}`,
     );
@@ -167,7 +173,7 @@ export class CommentManager implements vscode.Disposable {
               thread,
               reply.text.trim(),
             );
-            const updated = await sessionStore.createThread(
+            const updated = await this._sessionStore.createThread(
               sessionId,
               sessionThread,
             );
@@ -222,7 +228,7 @@ export class CommentManager implements vscode.Disposable {
           };
           try {
             // Send only the new message — sessionStore appends to existing messages
-            await sessionStore.updateThread(sessionId, threadId, {
+            await this._sessionStore.updateThread(sessionId, threadId, {
               messages: [newMessage],
             });
 
@@ -307,7 +313,9 @@ export class CommentManager implements vscode.Disposable {
         if (!threadId) return;
         const closed = status !== "open";
         try {
-          await sessionStore.updateThread(sessionId, threadId, { status });
+          await this._sessionStore.updateThread(sessionId, threadId, {
+            status,
+          });
 
           // Update inline comment thread UI if available
           if (commentThread) {
