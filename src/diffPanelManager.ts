@@ -4,12 +4,9 @@ import {
   SCHEME_BASE,
   SCHEME_EMPTY,
 } from "./baseContentProvider";
-import {
-  ChangedFilesTreeProvider,
-  cycleMode,
-  parseFileViewMode,
-} from "./changedFilesTree";
-import type { TreeNode } from "./changedFilesTree";
+import { ChangedFilesTreeProvider } from "./changedFilesTree";
+import { cycleMode, parseFileViewMode } from "./fileTree";
+import type { TreeNode } from "./fileTree";
 import { applyLineStats, DiffStatus, parseDiffFileList } from "./diffParser";
 import type { DiffFileEntry } from "./diffParser";
 import { ReviewFileDecorationProvider } from "./fileDecorationProvider";
