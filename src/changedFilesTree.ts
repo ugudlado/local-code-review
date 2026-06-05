@@ -88,7 +88,7 @@ export class ChangedFilesTreeProvider
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  private _mode: FileViewMode = "flat";
+  private _mode: FileViewMode = "compact-tree";
   private _files: DiffFileItem[] = [];
   private _rootChildren: TreeNode[] = [];
   private _parentMap = new Map<TreeNode, TreeNode | undefined>();

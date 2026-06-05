@@ -31,11 +31,11 @@ describe("parseFileViewMode", () => {
     expect(parseFileViewMode("compact-tree")).toBe("compact-tree");
   });
 
-  it("falls back to flat for anything invalid", () => {
-    expect(parseFileViewMode("tree")).toBe("flat");
-    expect(parseFileViewMode(undefined)).toBe("flat");
-    expect(parseFileViewMode(42)).toBe("flat");
-    expect(parseFileViewMode(null)).toBe("flat");
+  it("falls back to compact-tree for anything invalid", () => {
+    expect(parseFileViewMode("tree")).toBe("compact-tree");
+    expect(parseFileViewMode(undefined)).toBe("compact-tree");
+    expect(parseFileViewMode(42)).toBe("compact-tree");
+    expect(parseFileViewMode(null)).toBe("compact-tree");
   });
 });
 

@@ -13,7 +13,7 @@ const VALID_MODES: FileViewMode[] = ["flat", "compact-tree"];
 export function parseFileViewMode(raw: unknown): FileViewMode {
   return typeof raw === "string" && VALID_MODES.includes(raw as FileViewMode)
     ? (raw as FileViewMode)
-    : "flat";
+    : "compact-tree";
 }
 
 export function cycleMode(current: FileViewMode): FileViewMode {
