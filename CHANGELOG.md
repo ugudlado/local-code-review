@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 — 2026-06-05
+
+- Changed Files now opens in tree view by default (toggle to flat still sticks per workspace)
+- Show filename for renamed files in the tree
+- Diff now uses merge-base by default, matching GitHub's PR view
+  ! Fixed parseDiffNumstat to handle git's brace-expansion rename format (was dropping line stats)
+  ! Fixed path parsing in diff helpers
+
+* Extracted file-tree building to a pure module (fileTree.ts) with tests
+* Added architecture doc describing the four layers (Glue/UI/Storage&Git/Logic)
+* Unified session init flow—one path for both auto-create and Start Review
+* Lifecycle now owns all subscribers and session state
+* Refactored command handlers and initialization logic into activation/
+* Converted sessionStore to a class (was a module singleton)
+
 ## 1.1.1 — 2026-04-30
 
 ! Restore demo media on the marketplace listing (switched back to GIF since marketplace strips video tags)
