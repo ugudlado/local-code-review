@@ -52,8 +52,20 @@ export function parseDiffNumstat(stdout: string): Map<string, DiffLineStats> {
     if (parts.length < 3) continue;
     const additions = parts[0] === "-" ? 0 : Number(parts[0]) || 0;
     const deletions = parts[1] === "-" ? 0 : Number(parts[1]) || 0;
-    const path = parts.slice(2).join("\t");
-    stats.set(path, { additions, deletions });
+    const rawPath = parts.slice(2).join("\t");
+
+    // git --numstat uses brace-expansion for renames: "dir/{old.py => new.py}"
+    // Expand both old and new paths so either key hits the map.
+    const braceMatch = rawPath.match(/^(.*)\{(.+?) => (.+?)\}(.*)$/);
+    if (braceMatch) {
+      const [, prefix, oldStem, newStem, suffix] = braceMatch;
+      const oldPath = `${prefix}${oldStem}${suffix}`;
+      const newPath = `${prefix}${newStem}${suffix}`;
+      stats.set(oldPath, { additions, deletions });
+      stats.set(newPath, { additions, deletions });
+    } else {
+      stats.set(rawPath, { additions, deletions });
+    }
   }
   return stats;
 }

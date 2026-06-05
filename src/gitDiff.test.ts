@@ -36,6 +36,28 @@ describe("parseDiffNumstat", () => {
     expect(stats.size).toBe(1);
     expect(stats.get("file.ts")).toEqual({ additions: 3, deletions: 4 });
   });
+
+  it("expands brace-expansion rename paths", () => {
+    const stdout =
+      "25\t57\torchestrator_next/{complete_phase.py => scripts/complete/check-implement-complete.py}";
+    const stats = parseDiffNumstat(stdout);
+    expect(stats.get("orchestrator_next/complete_phase.py")).toEqual({
+      additions: 25,
+      deletions: 57,
+    });
+    expect(
+      stats.get(
+        "orchestrator_next/scripts/complete/check-implement-complete.py",
+      ),
+    ).toEqual({ additions: 25, deletions: 57 });
+  });
+
+  it("expands simple brace-expansion renames without prefix", () => {
+    const stdout = "10\t5\t{old.ts => new.ts}";
+    const stats = parseDiffNumstat(stdout);
+    expect(stats.get("old.ts")).toEqual({ additions: 10, deletions: 5 });
+    expect(stats.get("new.ts")).toEqual({ additions: 10, deletions: 5 });
+  });
 });
 
 describe("resolveDiffBaseRef", () => {
