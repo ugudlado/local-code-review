@@ -219,6 +219,11 @@ export class ChangedFilesTreeProvider
       parts.push(element.path);
     }
 
+    if (element.status === DiffStatus.Renamed) {
+      const oldBasename = element.oldPath.split("/").pop() ?? element.oldPath;
+      parts.push(`from ${oldBasename}`);
+    }
+
     if (element.additions + element.deletions > 0) {
       parts.push(`+${element.additions}/\u2212${element.deletions}`);
     }
