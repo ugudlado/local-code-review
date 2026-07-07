@@ -16,6 +16,19 @@ export function isLocalhostOrigin(origin: string | undefined): boolean {
   return LOCALHOST_ORIGIN_RE.test(origin);
 }
 
+const LOCALHOST_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+/**
+ * DNS-rebinding defense: a hostile domain re-resolving to 127.0.0.1 makes the
+ * browser treat its requests as same-origin (no Origin header), bypassing the
+ * Origin check — but the Host header still carries the attacker's hostname.
+ * Legitimate requests always arrive with a localhost Host.
+ */
+export function isLocalhostHost(host: string | undefined): boolean {
+  if (!host) return false;
+  return LOCALHOST_HOST_RE.test(host);
+}
+
 export interface AnnotateRequestBody {
   url: string;
   selector: string;
@@ -473,6 +486,12 @@ export function createCaptureHandler(
   deps: CaptureHandlerDeps,
 ): (req: http.IncomingMessage, res: http.ServerResponse) => void {
   return (req, res) => {
+    // Unconditional, before any route: reject DNS-rebound requests.
+    if (!isLocalhostHost(req.headers.host)) {
+      sendJson(res, 403, { error: "Bad Host" });
+      return;
+    }
+
     const pathname = (req.url ?? "").split("?")[0];
 
     const postHandler = POST_ROUTES[pathname];

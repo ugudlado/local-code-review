@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as http from "http";
 import {
+  isLocalhostHost,
   isLocalhostOrigin,
   startCaptureServer,
   validateAnnotateBody,
@@ -41,6 +42,22 @@ describe("isLocalhostOrigin", () => {
 
   it("rejects undefined", () => {
     expect(isLocalhostOrigin(undefined)).toBe(false);
+  });
+});
+
+describe("isLocalhostHost", () => {
+  it("accepts localhost and loopback hosts with or without port", () => {
+    expect(isLocalhostHost("127.0.0.1:43117")).toBe(true);
+    expect(isLocalhostHost("localhost:5173")).toBe(true);
+    expect(isLocalhostHost("localhost")).toBe(true);
+    expect(isLocalhostHost("[::1]:43117")).toBe(true);
+  });
+
+  it("rejects DNS-rebinding hosts and absent Host", () => {
+    expect(isLocalhostHost("attacker.example:43117")).toBe(false);
+    expect(isLocalhostHost("localhost.evil.com:43117")).toBe(false);
+    expect(isLocalhostHost(undefined)).toBe(false);
+    expect(isLocalhostHost("")).toBe(false);
   });
 });
 
@@ -471,6 +488,26 @@ describe("startCaptureServer (real HTTP round-trip over loopback)", () => {
       "application/javascript; charset=utf-8",
     );
     expect(res.body).toContain("__resolvrAnnotate");
+  });
+
+  it("rejects a DNS-rebound Host header with 403 on every route", async () => {
+    const { port, sessionStore } = await boot();
+    const rebound = { Host: "attacker.example:43117" };
+    const getRes = await request(port, "GET", rebound, undefined, "/context");
+    expect(getRes.status).toBe(403);
+    const postRes = await request(
+      port,
+      "POST",
+      { ...rebound, "Content-Type": "application/json" },
+      JSON.stringify({
+        url: "http://localhost:5173",
+        selector: ".x",
+        label: "x",
+        comment: "rebound",
+      }),
+    );
+    expect(postRes.status).toBe(403);
+    expect(await sessionStore.getSession("test-branch")).toBeNull();
   });
 
   it("GET /annotations rejects a non-localhost Origin with 403", async () => {
