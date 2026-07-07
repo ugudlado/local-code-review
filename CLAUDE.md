@@ -31,20 +31,27 @@ src/                        — Extension source (TypeScript)
   changedFilesTree.ts       — TreeDataProvider for Changed Files sidebar
   threadsTree.ts            — TreeDataProvider for review threads sidebar
   diffPanelManager.ts       — Diff tree population and tab opening
-  diffParser.ts             — Git diff output parser (pure, tested)
+  diffParser.ts             — Git diff output parser incl. per-file hunks (pure, tested)
+  fileTree.ts               — Pure tree model: folder/file/hunk nodes, hunk stream nav (tested)
   gitDiff.ts                — Git diff subprocess runner (helpers tested)
-  baseContentProvider.ts    — TextDocumentContentProvider for base-revision files
+  baseContentProvider.ts    — Content providers: base-revision files, empty docs, annotation context pages
   fileDecorationProvider.ts — File decoration badges (added/modified/deleted)
-  commentManager.ts         — VS Code CommentController integration
+  commentManager.ts         — VS Code CommentController integration (diff-line + dom-element threads)
   threadMapper.ts           — Maps session threads to VS Code comment ranges
+  threadFactory.ts          — Single source of thread construction for all writers (tested)
+  anchor.ts                 — describeAnchor: renders any anchor type for agent prompts (tested)
   agentInvoker.ts           — AI agent spawner for thread resolution
-  skillGenerator.ts         — Generates .review/AGENTS.md for AI agents
+  skillGenerator.ts         — Generates .review/AGENTS.md + diff-structure.json for AI agents
+  captureServer.ts          — Localhost HTTP capture endpoints for browser annotations (no vscode; tested)
+  repoContext.ts            — Sync git context helpers shared by CLI and Vite plugin
+  cli.ts                    — resolvr CLI entry (comment, serve) → dist/cli.js
+  vitePlugin.ts             — resolvr/vite plugin: same-origin capture routes + auto-injection → dist/vite.js
   *.test.ts                 — Vitest unit tests for the pure layer
 dist/                       — esbuild bundle output (NOT committed, gitignored)
 Makefile                    — Build/package/install shortcuts (run `make` for help)
 .claude/commands/           — Project-level slash commands (release-prep)
 .claude/skills/             — Project-level skill guides (vscode-ext, github)
-assets/                     — Extension marketplace assets (icon.png, demo.gif)
+assets/                     — Marketplace assets (icon.png, demo.gif) + annotate.js (browser capture script)
 specs/                      — Feature specifications (archived)
 docs/images/                — Screenshots for README
 .review/                    — Runtime session storage (gitignored)
@@ -102,6 +109,7 @@ No environment variables required. The extension reads from VS Code settings:
 
 - **`resolvr.defaultTargetBranch`** — Branch to diff against (default: auto-detected `main`/`master`)
 - **`resolvr.codingAgent`** — AI agent for "Resolve with AI" (`claude` | `codex` | `gemini`)
+- **`resolvr.capturePort`** — Port for the standalone browser-annotation endpoint (default `43117`; the Vite plugin doesn't use it — it rides the dev server's own origin)
 
 ## Code Quality
 
@@ -112,8 +120,10 @@ No environment variables required. The extension reads from VS Code settings:
 ## Important Reminders
 
 1. **Package manager**: Use `pnpm` (not npm); dependencies locked via pnpm-lock.yaml
-2. **Session files**: Live in `.review/sessions/` (gitignored); created when user saves review sessions
+2. **Session files**: Live in `.review/sessions/` (gitignored); created when user saves review sessions. Every capture surface (VS Code, browser, CLI, agents) writes the same files — HTTP exists only because a browser can't touch the filesystem
 3. **dist/ is NOT committed**: Always run `make build` before `make package` (or just `make package`, which builds first)
+4. **Three bundles**: `make build` emits `dist/extension.js` (may import vscode), `dist/cli.js`, and `dist/vite.js` (must NOT — their esbuild steps don't externalize vscode, so a leaked import fails the build)
+5. **Two distribution artifacts**: `.vsix` via `make package` (uses `.vscodeignore`) and a 36K npm tarball via `pnpm pack` (uses the `.npmignore` whitelist). vsce refuses a package.json `files` property alongside `.vscodeignore` — that's why the npm side uses `.npmignore`
 
 ## Gotchas
 
@@ -121,3 +131,5 @@ No environment variables required. The extension reads from VS Code settings:
 - **Worktree `.git` is a file**: Git worktrees have a `.git` file (not directory) pointing to the parent repo. Use `git rev-parse --git-common-dir` to find the real repo root
 - **AI review flow**: `skillGenerator.ts` writes `.review/AGENTS.md` at runtime with session context so AI agents can read thread data. The `.review/` directory is gitignored.
 - **Activation**: Extension activates on `workspaceContains:.review/` or `onStartupFinished` — effectively always-on once installed
+- **Default-branch behavior**: sessions never hydrate on `main`/`master` (no threads shown in VS Code), by design — but the capture endpoints still accept writes there. Test thread display on a feature branch.
+- **Capture endpoint security**: localhost-bound, Origin-checked CORS, and an unconditional localhost `Host` check (DNS-rebinding defense) on every route — don't loosen any of the three.

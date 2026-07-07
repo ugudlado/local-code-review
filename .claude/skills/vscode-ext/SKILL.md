@@ -9,21 +9,25 @@ Guide for developing, building, and packaging the resolvr VS Code extension.
 
 ## Extension Overview
 
-- **Entry point**: `src/extension.ts` → bundled to `dist/extension.js`
-- **Bundler**: esbuild (CJS format, `vscode` externalized)
+- **Entry points** (all bundled by `pnpm build`):
+  - `src/extension.ts` → `dist/extension.js` (the extension; `vscode` externalized)
+  - `src/cli.ts` → `dist/cli.js` (resolvr CLI; `vscode` NOT externalized — a leaked import fails the build)
+  - `src/vitePlugin.ts` → `dist/vite.js` (resolvr/vite plugin; same rule)
+- **Bundler**: esbuild (CJS format)
 - **Package manager**: pnpm (never npm)
 - **Current version**: Check root `package.json` `version` field
+- **Two artifacts**: `.vsix` via `pnpm package` (vsce, `.vscodeignore`), npm tarball via `pnpm pack` (`.npmignore` whitelist: dist/cli.js, dist/vite.js, assets/annotate.js). Never add a `files` property to package.json — vsce refuses it alongside `.vscodeignore`.
 
 ## Commands Reference
 
 All commands run from the **repo root**:
 
-| Task               | Command                                                     |
-| ------------------ | ----------------------------------------------------------- |
-| Build              | `pnpm build`                                                |
-| Watch (dev)        | `pnpm watch`                                                |
-| Type-check         | `pnpm type-check`                                           |
-| Package .vsix      | `pnpm package`                                              |
+| Task               | Command                                           |
+| ------------------ | ------------------------------------------------- |
+| Build              | `pnpm build`                                      |
+| Watch (dev)        | `pnpm watch`                                      |
+| Type-check         | `pnpm type-check`                                 |
+| Package .vsix      | `pnpm package`                                    |
 | Install in VS Code | `code --install-extension resolvr-<version>.vsix` |
 
 ## Build & Package Workflow

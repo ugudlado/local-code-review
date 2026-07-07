@@ -2,39 +2,62 @@
 
 Leave review comments on a running dev page and have them land as Resolvr
 threads, alongside your code-review comments, without leaving the browser.
+Every surface writes the same `.review/sessions/<branch>-code.json` file, so
+"Resolve with AI" treats UI feedback exactly like code feedback.
 
-## Usage (zero-install)
+## Vite projects (recommended — zero setup after one line)
 
-1. Have VS Code open on your project with Resolvr active — it hosts the
-   local capture endpoint on `127.0.0.1:43117` while running.
-2. Open your dev server page (e.g. `http://localhost:5173`) in the browser.
-3. Open devtools console, paste the contents of `assets/annotate.js`, press
-   Enter.
-4. Hover elements to see them highlighted; click one, type a comment, hit
-   Submit.
-5. The thread appears in Resolvr's Threads sidebar within a couple seconds,
-   grouped under "UI Feedback".
+```ts
+// vite.config.ts
+import { resolvrAnnotations } from "resolvr/vite";
+export default { plugins: [resolvrAnnotations()] };
+```
 
-Run `window.__resolvrAnnotate.stop()` in the console to turn off annotation
-mode.
+The plugin runs inside the dev server, so it carries the session context
+itself (repo + branch of the checkout it launched from), mounts the capture
+endpoints at `/__resolvr/` on the dev server's own origin (no CORS, no
+separate port, works with VS Code closed), and auto-injects the annotation
+UI into every served page. Dev-server only — production builds are
+untouched. Options: `resolvrAnnotations({ targetBranch: "develop" })`.
 
-## Bookmarklet
+## Everything else (script tag or bookmarklet)
 
-For repeat use, wrap `assets/annotate.js`'s contents in a `javascript:` URL
-and save it as a browser bookmark — e.g. prefix the minified script with
-`javascript:` and paste the whole thing as the bookmark's URL. No build step,
-no hosting required.
+A localhost capture endpoint runs on `127.0.0.1:43117` whenever the VS Code
+extension is active — or host it yourself with `resolvr serve` when VS Code
+is closed. Then either:
 
-## Non-default port
+- add a dev-only tag to your page: `<script src="http://127.0.0.1:43117/annotate.js"></script>`
+  (no SRI hash on purpose: the script is served from your own loopback and
+  changes with every resolvr version), or
+- paste `assets/annotate.js` into the devtools console / wrap it in a
+  `javascript:` bookmarklet.
 
-If you've changed `resolvr.capturePort` in VS Code settings, edit the
-`CAPTURE_PORT` constant at the top of `assets/annotate.js` (or the
-bookmarklet) to match before using it — the port is baked into the script,
-not auto-discovered.
+The endpoint base is derived from the script tag's own `src`, so the same
+script works against any host. Console-paste falls back to port 43117 —
+edit the fallback in the script if you changed `resolvr.capturePort`.
 
-## HTTPS dev servers
+## Using it
 
-Browsers block a page served over `https://` from calling an `http://`
-localhost endpoint (mixed-content / private-network-access rules). Local
-`http://` dev servers are the supported path for this feature; there's no
-workaround for `https` dev servers today.
+- Hover highlights elements; click one, type a comment, submit.
+- The docked right-side panel lists the page's annotations with a
+  `repo @ branch` header — so you always see which session you're writing
+  into. Expand a thread for the full conversation (agent replies show as
+  🤖 with the model name), reply, or resolve/reopen from the panel.
+- The panel is a snapshot: it refreshes after your own actions or via the
+  Refresh button, not live. If you switch branches while the dev server
+  keeps running, a drift warning appears — the page may be showing stale
+  code.
+- In VS Code, these threads appear in the Threads sidebar under
+  "UI Feedback"; clicking one opens the conversation in the same comment
+  widget code-review threads use.
+
+## Security model
+
+- Endpoints bind to `127.0.0.1` only (or ride the Vite dev server).
+- Cross-origin requests are allowed only from localhost origins (CORS +
+  Origin check on POSTs).
+- Every route rejects non-localhost `Host` headers, closing the DNS
+  rebinding hole (a hostile domain re-resolving to 127.0.0.1 would
+  otherwise read annotation data as "same-origin").
+- Pages served over **https** cannot call an http localhost endpoint
+  (mixed-content rules) — local http dev servers are the supported path.

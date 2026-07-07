@@ -1,22 +1,45 @@
 # Resolvr — Architecture
 
-A 3.5K-LOC VS Code extension organized as four named layers. No DI container,
-no service locator — plain constructors and a `deps` object.
+A VS Code extension (plus a small CLI and a Vite plugin) organized as four
+named layers. No DI container, no service locator — plain constructors and a
+`deps` object.
 
 ## Layers
 
 Each layer has one job and a one-line rule of thumb you can hold in your head:
 
-| Layer                | What lives here                                                           | Rule                                                                                     |
-| -------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 🔌 **Glue**          | `extension.ts`, `activation/lifecycle.ts`, `activation/commands.ts`       | "Wires the other three together at startup. Owns nothing of its own."                    |
-| 🪟 **UI**            | trees, comments, status bar, file watchers, branch detector, virtual docs | "Imports `vscode`. Reacts to user actions and editor events."                            |
-| 💾 **Storage & Git** | `SessionStore`, `gitDiff`, `SkillGenerator`, `agentInvoker`               | "Reads/writes files or shells out to git. No `vscode`."                                  |
-| 🧮 **Logic**         | `git.ts`, `diffParser`, `threadMapper`, `config`                          | "Pure functions. No `fs`, no `vscode`, no side effects. Tested in vitest with no mocks." |
+| Layer                | What lives here                                                                             | Rule                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 🔌 **Glue**          | `extension.ts`, `activation/lifecycle.ts`, `activation/commands.ts`                         | "Wires the other three together at startup. Owns nothing of its own."                    |
+| 🪟 **UI**            | trees, comments, status bar, file watchers, branch detector, virtual docs                   | "Imports `vscode`. Reacts to user actions and editor events."                            |
+| 💾 **Storage & Git** | `SessionStore`, `gitDiff`, `SkillGenerator`, `agentInvoker`, `captureServer`, `repoContext` | "Reads/writes files or shells out to git. No `vscode`."                                  |
+| 🧮 **Logic**         | `git.ts`, `diffParser`, `fileTree`, `threadMapper`, `threadFactory`, `anchor`, `config`     | "Pure functions. No `fs`, no `vscode`, no side effects. Tested in vitest with no mocks." |
 
 A module's layer is detectable mechanically: grep for `import vscode` (UI),
 `fs`/`child_process` (Storage & Git), or neither (Logic). The Glue layer is
 the only one that imports from all three.
+
+## Hosts
+
+Three bundles share the vscode-free layers, which is why the "No `vscode`"
+rule on Storage & Git is load-bearing:
+
+| Bundle              | Entry           | Role                                                                                     |
+| ------------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `dist/extension.js` | `extension.ts`  | The VS Code extension (only bundle that may import `vscode`)                             |
+| `dist/cli.js`       | `cli.ts`        | `resolvr comment` / `resolvr serve` from the terminal                                    |
+| `dist/vite.js`      | `vitePlugin.ts` | `resolvr/vite` — mounts the capture routes on the dev server's origin, injects the panel |
+
+All hosts derive session identity the same way — "the checkout you launched
+from" — and construct `captureServer`'s `createCaptureHandler` with injected
+deps. The esbuild steps for `cli.js`/`vite.js` do NOT externalize `vscode`,
+so a leaked `vscode` import fails the build; that is the layer check.
+
+The session **files** are the integration surface, not HTTP: every writer
+(VS Code comments, CLI, browser capture, agents editing session JSON per
+`AGENTS.md`) uses the same atomic temp+rename write, and `sessionWatcher`
+reconciles external writes into a running VS Code. HTTP exists only because
+a browser page cannot touch the filesystem.
 
 Construction lives in `extension.ts`. The activation entry only does:
 
@@ -64,6 +87,7 @@ flowchart TB
     GD["gitDiff.ts<br/>getLocalDiff"]
     SG["SkillGenerator"]
     AI["agentInvoker"]
+    CAP["captureServer<br/>createCaptureHandler"]
   end
 
   subgraph LOGIC["🧮 Logic — pure functions, no side effects"]
