@@ -4,6 +4,7 @@ import type { DiffPanelManager } from "../diffPanelManager";
 import type { SessionStore } from "../sessionStore";
 import type { SkillGenerator } from "../skillGenerator";
 import { DiffStatus } from "../diffParser";
+import { findAdjacentHunk } from "../fileTree";
 import {
   resolveInExistingTerminal,
   resolveWithNewAgent,
@@ -293,6 +294,14 @@ export function registerCommands(deps: CommandDeps): void {
       }
     }),
 
+    vscode.commands.registerCommand("resolvr.nextHunk", async () => {
+      await goToAdjacentHunk(diffPanelManager, "next");
+    }),
+
+    vscode.commands.registerCommand("resolvr.prevHunk", async () => {
+      await goToAdjacentHunk(diffPanelManager, "prev");
+    }),
+
     vscode.commands.registerCommand("resolvr.regenerateSkills", async () => {
       const sessionId = branchDetector.commentSessionId;
       if (!sessionId) {
@@ -307,6 +316,8 @@ export function registerCommands(deps: CommandDeps): void {
           sessionId,
           sessionStore.getSessionFilePath(sessionId),
           session,
+          diffPanelManager.files,
+          diffPanelManager.baseRef,
         );
         await skillGenerator.generate(skillContext, session);
         void vscode.window.showInformationMessage(
@@ -320,6 +331,26 @@ export function registerCommands(deps: CommandDeps): void {
       }
     }),
   );
+}
+
+/** Move to the next/prev hunk in the review stream; no-op when there are none. */
+async function goToAdjacentHunk(
+  diffPanelManager: DiffPanelManager,
+  direction: "next" | "prev",
+): Promise<void> {
+  const flat = diffPanelManager.getHunkStream();
+  if (flat.length === 0) return;
+
+  const position = diffPanelManager.getCurrentPosition();
+  const result = findAdjacentHunk(
+    flat,
+    position?.path,
+    position?.line,
+    direction,
+  );
+  if (!result) return;
+
+  await diffPanelManager.openFile(result.file, result.hunk.firstChangedNewLine);
 }
 
 /** List branches via the VS Code Git extension API, falling back to git CLI. */

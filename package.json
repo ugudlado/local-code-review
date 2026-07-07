@@ -119,6 +119,14 @@
         "command": "resolvr.changeTargetBranch",
         "title": "Resolvr: Change Target Branch",
         "icon": "$(git-branch)"
+      },
+      {
+        "command": "resolvr.nextHunk",
+        "title": "Resolvr: Next Hunk"
+      },
+      {
+        "command": "resolvr.prevHunk",
+        "title": "Resolvr: Previous Hunk"
       }
     ],
     "views": {
@@ -244,6 +252,18 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "resolvr.nextHunk",
+        "key": "alt+j",
+        "when": "resolvr.hasDiffPanel"
+      },
+      {
+        "command": "resolvr.prevHunk",
+        "key": "alt+k",
+        "when": "resolvr.hasDiffPanel"
+      }
+    ],
     "configuration": {
       "title": "Resolvr",
       "properties": {

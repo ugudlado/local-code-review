@@ -5,8 +5,8 @@ import {
   SCHEME_EMPTY,
 } from "./baseContentProvider";
 import { ChangedFilesTreeProvider } from "./changedFilesTree";
-import { cycleMode, parseFileViewMode } from "./fileTree";
-import type { TreeNode } from "./fileTree";
+import { cycleMode, flattenHunks, parseFileViewMode } from "./fileTree";
+import type { DiffFileItem, FlatHunk, TreeNode } from "./fileTree";
 import { applyLineStats, DiffStatus, parseDiffFileList } from "./diffParser";
 import type { DiffFileEntry } from "./diffParser";
 import { ReviewFileDecorationProvider } from "./fileDecorationProvider";
@@ -36,10 +36,21 @@ export class DiffPanelManager implements vscode.Disposable {
   private _context: vscode.ExtensionContext;
   private _sessionStore: SessionStore;
   private _targetBranch: string | undefined;
+  private _baseRef: string | undefined;
   private _suppressSelectionOpen = false;
 
   get treeProvider(): ChangedFilesTreeProvider {
     return this._treeProvider;
+  }
+
+  /** Parsed diff entries (including hunks) from the most recent populate(). */
+  get files(): DiffFileEntry[] {
+    return this._files;
+  }
+
+  /** The ref actually diffed against (target tip or resolved merge-base SHA). */
+  get baseRef(): string | undefined {
+    return this._baseRef;
   }
 
   /** Look up a diff file entry by path (matches path, oldPath, or newPath) */
@@ -48,6 +59,47 @@ export class DiffPanelManager implements vscode.Disposable {
       (f) =>
         f.path === filePath || f.oldPath === filePath || f.newPath === filePath,
     );
+  }
+
+  /** The (file, hunk) stream in the same order the tree's compact-tree default renders it. */
+  getHunkStream(): FlatHunk[] {
+    const items: DiffFileItem[] = this._files.map((f) => ({
+      ...f,
+      kind: "file" as const,
+      openThreads: 0,
+    }));
+    return flattenHunks(items);
+  }
+
+  /**
+   * Resolve the active text editor's document back to one of our diffed files
+   * and its 1-based line, if it's showing one of our diff/base URIs.
+   * Returns undefined when there's no active editor or it isn't one of ours.
+   */
+  getCurrentPosition(): { path: string; line: number } | undefined {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return undefined;
+
+    const uri = editor.document.uri;
+    let relativePath: string | undefined;
+
+    if (uri.scheme === "file" && uri.fsPath.startsWith(this._workspaceRoot)) {
+      relativePath = uri.fsPath
+        .slice(this._workspaceRoot.length)
+        .replace(/^[/\\]/, "");
+    } else if (uri.scheme === SCHEME_BASE || uri.scheme === SCHEME_EMPTY) {
+      relativePath = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
+    } else {
+      return undefined;
+    }
+
+    const entry = this.getFileByPath(relativePath);
+    if (!entry) return undefined;
+
+    return {
+      path: entry.path,
+      line: editor.selection.active.line + 1,
+    };
   }
 
   constructor(
@@ -88,6 +140,8 @@ export class DiffPanelManager implements vscode.Disposable {
       const node = e.selection[0];
       if (node?.kind === "file") {
         void this.openFile(node);
+      } else if (node?.kind === "hunk") {
+        void this.openFile(node.file, node.hunk.firstChangedNewLine);
       }
     });
   }
@@ -125,6 +179,7 @@ export class DiffPanelManager implements vscode.Disposable {
         mode,
       );
       this._baseProvider.setBaseRef(baseRef);
+      this._baseRef = baseRef;
       const diff = await getLocalDiff(this._workspaceRoot, target, baseRef);
       this._files = parseDiffFileList(diff.allDiff);
       applyLineStats(this._files, diff.lineStats);
@@ -176,7 +231,7 @@ export class DiffPanelManager implements vscode.Disposable {
     }
   }
 
-  async openFile(file: DiffFileRef): Promise<void> {
+  async openFile(file: DiffFileRef, revealNewLine?: number): Promise<void> {
     let oldUri: vscode.Uri;
     let newUri: vscode.Uri;
 
@@ -203,9 +258,20 @@ export class DiffPanelManager implements vscode.Disposable {
         ? `${file.oldPath} → ${file.newPath} (Review Diff)`
         : `${file.path} (Review Diff)`;
 
-    await vscode.commands.executeCommand("vscode.diff", oldUri, newUri, title, {
-      preview: false,
-    });
+    const options: vscode.TextDocumentShowOptions = { preview: false };
+    // Deleted files have no new-side content to reveal a line in — whole-file view only.
+    if (revealNewLine !== undefined && file.status !== DiffStatus.Deleted) {
+      const line = revealNewLine - 1;
+      options.selection = new vscode.Range(line, 0, line, 0);
+    }
+
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      oldUri,
+      newUri,
+      title,
+      options,
+    );
   }
 
   /**

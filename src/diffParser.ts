@@ -10,6 +10,19 @@ export enum DiffStatus {
   Renamed = "R",
 }
 
+export interface DiffHunk {
+  index: number; // 1-based within the file
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  section: string; // git's function-context text after the closing @@, may be ""
+  additions: number;
+  deletions: number;
+  firstChangedNewLine: number; // new-side line of the first +/- line — the jump target
+  preview: string; // first changed line's content, trimmed, max ~80 chars
+}
+
 export interface DiffFileEntry {
   path: string; // display path (new path for renames)
   oldPath: string; // path in base ref
@@ -17,6 +30,58 @@ export interface DiffFileEntry {
   status: DiffStatus;
   additions: number; // lines added (from hunk content)
   deletions: number; // lines removed (from hunk content)
+  hunks: DiffHunk[];
+}
+
+const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
+
+function parseHunks(lines: string[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | null = null;
+  let newLineCounter = 0;
+
+  for (const line of lines) {
+    const headerMatch = line.match(HUNK_HEADER_RE);
+    if (headerMatch) {
+      const oldStart = Number(headerMatch[1]);
+      const newStart = Number(headerMatch[3]);
+      current = {
+        index: hunks.length + 1,
+        oldStart,
+        oldCount: headerMatch[2] !== undefined ? Number(headerMatch[2]) : 1,
+        newStart,
+        newCount: headerMatch[4] !== undefined ? Number(headerMatch[4]) : 1,
+        section: headerMatch[5].trim(),
+        additions: 0,
+        deletions: 0,
+        firstChangedNewLine: newStart,
+        preview: "",
+      };
+      hunks.push(current);
+      newLineCounter = newStart;
+      continue;
+    }
+    if (!current) continue;
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      current.additions++;
+      if (current.preview === "") {
+        current.firstChangedNewLine = newLineCounter;
+        current.preview = line.slice(1).trim().slice(0, 80);
+      }
+      newLineCounter++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      current.deletions++;
+      if (current.preview === "") {
+        current.firstChangedNewLine = newLineCounter;
+        current.preview = line.slice(1).trim().slice(0, 80);
+      }
+    } else if (line.startsWith(" ")) {
+      newLineCounter++;
+    }
+  }
+
+  return hunks;
 }
 
 /** Apply `git diff --numstat` counts so tree stats match `git diff --stat`. */
@@ -76,6 +141,7 @@ export function parseDiffFileList(unifiedDiff: string): DiffFileEntry[] {
       status,
       additions,
       deletions,
+      hunks: parseHunks(lines),
     });
   }
 

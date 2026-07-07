@@ -13,6 +13,8 @@ import type {
   FileViewMode,
   DiffFileItem,
   FolderNode,
+  HunkNode,
+  StaticTreeNode,
   TreeNode,
 } from "./fileTree";
 
@@ -64,9 +66,19 @@ const STATUS_LABELS: Record<DiffStatus, string> = {
 // UI-only tree helper
 // ---------------------------------------------------------------------------
 
+/**
+ * Deleted files have no new-side content to reveal, so their hunks (which
+ * still parse — the diff for a deleted line-based file has real @@ headers)
+ * aren't rendered as navigable tree children. Binary/mode-only deletions
+ * already have `hunks: []` and hit the same "no arrow" outcome for free.
+ */
+function hasNavigableHunks(file: DiffFileItem): boolean {
+  return file.status !== DiffStatus.Deleted && file.hunks.length > 0;
+}
+
 /** Build a parent map for O(1) getParent() lookups. */
 function buildParentMap(
-  nodes: TreeNode[],
+  nodes: StaticTreeNode[],
   parent: TreeNode | undefined,
   map: Map<TreeNode, TreeNode | undefined>,
 ): void {
@@ -76,6 +88,9 @@ function buildParentMap(
       buildParentMap(node.children, node, map);
     }
   }
+  // Hunk nodes are materialized on demand in getChildren() (not part of the
+  // static tree built here), so they're intentionally absent from this map —
+  // nothing calls getParent()/reveal() on a hunk node today.
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +105,7 @@ export class ChangedFilesTreeProvider
 
   private _mode: FileViewMode = "compact-tree";
   private _files: DiffFileItem[] = [];
-  private _rootChildren: TreeNode[] = [];
+  private _rootChildren: StaticTreeNode[] = [];
   private _parentMap = new Map<TreeNode, TreeNode | undefined>();
 
   get mode(): FileViewMode {
@@ -116,7 +131,9 @@ export class ChangedFilesTreeProvider
     const counts = new Map<string, number>();
     for (const t of threads) {
       if (t.status !== "open") continue;
-      const path = t.anchor?.path;
+      // dom-element anchors have no file path — they don't belong to any
+      // file node's count.
+      const path = t.anchor.type === "diff-line" ? t.anchor.path : undefined;
       if (path) counts.set(path, (counts.get(path) ?? 0) + 1);
     }
     let changed = false;
@@ -155,12 +172,22 @@ export class ChangedFilesTreeProvider
     if (element.kind === "folder") {
       return this._getFolderTreeItem(element);
     }
+    if (element.kind === "hunk") {
+      return this._getHunkTreeItem(element);
+    }
     return this._getFileTreeItem(element);
   }
 
   getChildren(element?: TreeNode): TreeNode[] {
     if (!element) return this._rootChildren;
     if (element.kind === "folder") return element.children;
+    if (element.kind === "file" && hasNavigableHunks(element)) {
+      return element.hunks.map((hunk) => ({
+        kind: "hunk" as const,
+        file: element,
+        hunk,
+      }));
+    }
     return [];
   }
 
@@ -205,7 +232,9 @@ export class ChangedFilesTreeProvider
     const label = element.path.split("/").pop() ?? element.path;
     const item = new vscode.TreeItem(
       label,
-      vscode.TreeItemCollapsibleState.None,
+      hasNavigableHunks(element)
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None,
     );
 
     item.resourceUri = makeReviewFileUri(element.path);
@@ -259,6 +288,22 @@ export class ChangedFilesTreeProvider
     }
     item.tooltip = tooltipLines.join("\n");
 
+    return item;
+  }
+
+  private _getHunkTreeItem(element: HunkNode): vscode.TreeItem {
+    const { hunk } = element;
+    const context = hunk.section || hunk.preview;
+    const label = context
+      ? `@@ ${hunk.newStart} ${context}`
+      : `@@ ${hunk.newStart}`;
+    const item = new vscode.TreeItem(
+      label,
+      vscode.TreeItemCollapsibleState.None,
+    );
+    item.description = `+${hunk.additions} −${hunk.deletions}`;
+    item.iconPath = new vscode.ThemeIcon("diff");
+    item.contextValue = "hunk";
     return item;
   }
 }

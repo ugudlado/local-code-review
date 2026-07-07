@@ -122,6 +122,160 @@ describe("parseDiffFileList", () => {
   });
 });
 
+describe("hunk parsing", () => {
+  it("parses a multi-hunk file", () => {
+    const diff = [
+      "diff --git a/src/foo.ts b/src/foo.ts",
+      "--- a/src/foo.ts",
+      "+++ b/src/foo.ts",
+      "@@ -1,3 +1,3 @@ function one() {",
+      " context",
+      "-old line",
+      "+new line",
+      " context",
+      "@@ -10,2 +10,3 @@ function two() {",
+      " context",
+      "+added line",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks).toHaveLength(2);
+    expect(entry.hunks[0]).toMatchObject({
+      index: 1,
+      oldStart: 1,
+      oldCount: 3,
+      newStart: 1,
+      newCount: 3,
+      section: "function one() {",
+      additions: 1,
+      deletions: 1,
+      firstChangedNewLine: 2,
+      preview: "old line",
+    });
+    expect(entry.hunks[1]).toMatchObject({
+      index: 2,
+      oldStart: 10,
+      oldCount: 2,
+      newStart: 10,
+      newCount: 3,
+      section: "function two() {",
+      additions: 1,
+      deletions: 0,
+      firstChangedNewLine: 11,
+      preview: "added line",
+    });
+  });
+
+  it("defaults omitted hunk counts to 1", () => {
+    const diff = [
+      "diff --git a/foo.ts b/foo.ts",
+      "--- a/foo.ts",
+      "+++ b/foo.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks[0]).toMatchObject({
+      oldStart: 1,
+      oldCount: 1,
+      newStart: 1,
+      newCount: 1,
+    });
+  });
+
+  it("computes firstChangedNewLine for a pure-deletion hunk", () => {
+    const diff = [
+      "diff --git a/foo.ts b/foo.ts",
+      "--- a/foo.ts",
+      "+++ b/foo.ts",
+      "@@ -1,4 +1,3 @@",
+      " context1",
+      " context2",
+      "-removed",
+      " context3",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks[0].firstChangedNewLine).toBe(3);
+    expect(entry.hunks[0].preview).toBe("removed");
+  });
+
+  it("parses hunks on a renamed file", () => {
+    const diff = [
+      "diff --git a/old.ts b/new.ts",
+      "similarity index 90%",
+      "rename from old.ts",
+      "rename to new.ts",
+      "--- a/old.ts",
+      "+++ b/new.ts",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks).toHaveLength(1);
+  });
+
+  it("gives an added file one hunk starting at line 1", () => {
+    const diff = [
+      "diff --git a/new.ts b/new.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/new.ts",
+      "@@ -0,0 +1,2 @@",
+      "+one",
+      "+two",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks).toHaveLength(1);
+    expect(entry.hunks[0].newStart).toBe(1);
+    expect(entry.hunks[0].firstChangedNewLine).toBe(1);
+  });
+
+  it("still parses the hunk for a deleted file (display omits it)", () => {
+    const diff = [
+      "diff --git a/gone.ts b/gone.ts",
+      "deleted file mode 100644",
+      "--- a/gone.ts",
+      "+++ /dev/null",
+      "@@ -1,1 +0,0 @@",
+      "-bye",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks).toHaveLength(1);
+  });
+
+  it("has zero hunks for a binary/mode-only change with no @@ headers", () => {
+    const diff = [
+      "diff --git a/image.png b/image.png",
+      "index 1111111..2222222 100644",
+      "Binary files a/image.png and b/image.png differ",
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks).toEqual([]);
+  });
+
+  it("truncates preview to 80 chars", () => {
+    const longLine = "x".repeat(100);
+    const diff = [
+      "diff --git a/foo.ts b/foo.ts",
+      "--- a/foo.ts",
+      "+++ b/foo.ts",
+      "@@ -1,1 +1,1 @@",
+      `+${longLine}`,
+    ].join("\n");
+
+    const [entry] = parseDiffFileList(diff);
+    expect(entry.hunks[0].preview).toHaveLength(80);
+  });
+});
+
 describe("applyLineStats", () => {
   it("overwrites hunk-derived counts with numstat counts when available", () => {
     const entries: DiffFileEntry[] = [
@@ -132,6 +286,7 @@ describe("applyLineStats", () => {
         status: DiffStatus.Modified,
         additions: 1,
         deletions: 1,
+        hunks: [],
       },
     ];
     applyLineStats(
@@ -151,6 +306,7 @@ describe("applyLineStats", () => {
         status: DiffStatus.Renamed,
         additions: 0,
         deletions: 0,
+        hunks: [],
       },
     ];
     applyLineStats(
@@ -170,6 +326,7 @@ describe("applyLineStats", () => {
         status: DiffStatus.Modified,
         additions: 7,
         deletions: 7,
+        hunks: [],
       },
     ];
     applyLineStats(
