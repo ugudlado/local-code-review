@@ -91,5 +91,28 @@ export class EmptyContentProvider
   }
 }
 
+/**
+ * Read-only context page for a `dom-element` thread — there's no source file
+ * to anchor to, so this renders the captured url/selector/label/viewport as
+ * plain text. Lets the thread's conversation render via the same
+ * CommentController widget diff-line threads use (same trick as SCHEME_BASE).
+ * URI format: resolvr-annotation:/<threadId>
+ */
+export class AnnotationContentProvider
+  implements vscode.TextDocumentContentProvider
+{
+  private _content = new Map<string, string>();
+
+  setContent(threadId: string, text: string): void {
+    this._content.set(threadId, text);
+  }
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    const threadId = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
+    return this._content.get(threadId) ?? "";
+  }
+}
+
 export const SCHEME_BASE = "resolvr-base";
 export const SCHEME_EMPTY = "resolvr-empty";
+export const SCHEME_ANNOTATION = "resolvr-annotation";

@@ -294,6 +294,11 @@
           ],
           "default": "merge-base",
           "description": "How the Changed Files view computes the base side. 'merge-base' (default) mirrors GitHub PR semantics."
+        },
+        "resolvr.capturePort": {
+          "type": "number",
+          "default": 43117,
+          "description": "Local port for the browser annotation capture endpoint (127.0.0.1 only). Change this if the default port is already in use, and regenerate your capture bookmarklet to match."
         }
       }
     }

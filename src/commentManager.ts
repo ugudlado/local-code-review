@@ -1,12 +1,17 @@
 import * as vscode from "vscode";
-import { createHash } from "crypto";
 import type {
   SessionThread,
   SessionMessage,
   SessionStore,
 } from "./sessionStore";
+import { buildThread, diffLineAnchor } from "./threadFactory";
 import { ThreadMapper } from "./threadMapper";
-import { SCHEME_BASE } from "./baseContentProvider";
+import {
+  SCHEME_BASE,
+  SCHEME_ANNOTATION,
+  AnnotationContentProvider,
+} from "./baseContentProvider";
+import { describeAnchor } from "./anchor";
 
 export class CommentManager implements vscode.Disposable {
   private readonly _onDidUpdateThread = new vscode.EventEmitter<string>();
@@ -33,6 +38,7 @@ export class CommentManager implements vscode.Disposable {
   private _workspaceRoot: string;
   private _outputChannel: vscode.OutputChannel;
   private _sessionStore: SessionStore;
+  private _annotationContentProvider: AnnotationContentProvider;
   private _lastThreads: SessionThread[] = [];
   private _visible = true;
 
@@ -44,17 +50,22 @@ export class CommentManager implements vscode.Disposable {
     workspaceRoot: string,
     outputChannel: vscode.OutputChannel,
     sessionStore: SessionStore,
+    annotationContentProvider: AnnotationContentProvider,
   ) {
     this._workspaceRoot = workspaceRoot;
     this._outputChannel = outputChannel;
     this._sessionStore = sessionStore;
+    this._annotationContentProvider = annotationContentProvider;
     this._threadMapper = new ThreadMapper();
     this._controller = vscode.comments.createCommentController(
       "resolvr",
       "Resolvr",
     );
 
-    // Enable the "+" gutter icon on real files and virtual base-content files
+    // Enable the "+" gutter icon on real files and virtual base-content files.
+    // SCHEME_ANNOTATION is read-only context for dom-element threads — no "+"
+    // affordance makes sense there (there's no line to comment on), so it's
+    // deliberately excluded from this whitelist.
     this._controller.commentingRangeProvider = {
       provideCommentingRanges(document: vscode.TextDocument) {
         if (
@@ -159,7 +170,7 @@ export class CommentManager implements vscode.Disposable {
 
             this._onDidUpdateThread.fire(sessionId);
             outputChannel.appendLine(
-              `Created thread ${sessionThread.id} on ${sessionThread.anchor.path}:${sessionThread.anchor.line}`,
+              `Created thread ${sessionThread.id} — ${describeAnchor(sessionThread.anchor)}`,
             );
           } catch (err) {
             outputChannel.appendLine(`Failed to create thread: ${String(err)}`);
@@ -340,82 +351,74 @@ export class CommentManager implements vscode.Disposable {
 
     const document = await vscode.workspace.openTextDocument(uri);
     const lineContent = document.lineAt(range.start.line).text;
-    const hash = createHash("sha256")
-      .update(lineContent)
-      .digest("hex")
-      .slice(0, 8);
 
-    const now = new Date().toISOString();
-    const messageId = crypto.randomUUID();
-    const threadId = crypto.randomUUID();
-
-    const message: SessionMessage = {
-      id: messageId,
-      authorType: "human",
-      author: "Reviewer",
-      text,
-      createdAt: now,
-    };
-
-    const sessionThread: SessionThread = {
-      id: threadId,
-      anchor: {
-        type: "diff-line",
-        hash,
+    return buildThread({
+      anchor: diffLineAnchor({
         path: relativePath,
-        preview: lineContent.slice(0, 120),
         line,
         lineEnd,
         side,
-      },
-      status: "open",
-      severity: "improvement",
-      messages: [message],
-      lastUpdatedAt: now,
-    };
-
-    return sessionThread;
+        lineContent,
+      }),
+      text,
+      author: "Reviewer",
+    });
   }
 
   private _createVSCodeThread(
     sessionThread: SessionThread,
   ): vscode.CommentThread | null {
-    // Threads may be in anchor format (from VS Code) or flat format (from browser).
-    // Normalize to get path, line, lineEnd, side.
-    const anchor = sessionThread.anchor;
-    const flat = sessionThread as unknown as Record<string, unknown>;
-    const threadPath =
-      anchor?.path ?? (flat.filePath as string | undefined) ?? "";
-    const threadLine = anchor?.line ?? (flat.line as number | undefined) ?? 1;
-    const threadLineEnd =
-      anchor?.lineEnd ?? (flat.lineEnd as number | undefined);
-    const threadSide =
-      anchor?.side ?? (flat.side as "old" | "new" | undefined) ?? "new";
-
-    if (!threadPath) {
-      this._outputChannel.appendLine(
-        `Skipping thread ${sessionThread.id} — no file path`,
-      );
-      return null;
-    }
-
-    // Route old-side threads to virtual URI (visible in diff panel left pane).
-    // When no diff is open, the virtual document isn't visible — same as before.
-    let filePath: vscode.Uri;
-    if (threadSide === "old") {
-      filePath = vscode.Uri.parse(`${SCHEME_BASE}:/${threadPath}`);
-    } else {
-      filePath = vscode.Uri.file(`${this._workspaceRoot}/${threadPath}`);
-    }
-
-    // 1-based session lines → 0-based VS Code range
-    const startLine = threadLine - 1;
-    const endLine = (threadLineEnd ?? threadLine) - 1;
-    const range = new vscode.Range(startLine, 0, endLine, 0);
-
     const comments = sessionThread.messages.map((msg) =>
       this._createComment(msg),
     );
+
+    let filePath: vscode.Uri;
+    let range: vscode.Range;
+
+    if (sessionThread.anchor.type === "dom-element") {
+      // No source file to anchor to — render on a read-only virtual doc
+      // (same trick SCHEME_BASE uses for deleted-file old-side content) so
+      // the thread gets the same CommentController widget as diff-line
+      // threads: stacked messages, reply box, resolve/reopen commands.
+      this._annotationContentProvider.setContent(
+        sessionThread.id,
+        describeAnchor(sessionThread.anchor),
+      );
+      filePath = vscode.Uri.parse(`${SCHEME_ANNOTATION}:/${sessionThread.id}`);
+      range = new vscode.Range(0, 0, 0, 0);
+    } else {
+      // Threads may be in anchor format (from VS Code) or flat format (from
+      // browser). Normalize to get path, line, lineEnd, side.
+      const anchor = sessionThread.anchor;
+      const flat = sessionThread as unknown as Record<string, unknown>;
+      const threadPath =
+        anchor?.path ?? (flat.filePath as string | undefined) ?? "";
+      const threadLine = anchor?.line ?? (flat.line as number | undefined) ?? 1;
+      const threadLineEnd =
+        anchor?.lineEnd ?? (flat.lineEnd as number | undefined);
+      const threadSide =
+        anchor?.side ?? (flat.side as "old" | "new" | undefined) ?? "new";
+
+      if (!threadPath) {
+        this._outputChannel.appendLine(
+          `Skipping thread ${sessionThread.id} — no file path`,
+        );
+        return null;
+      }
+
+      // Route old-side threads to virtual URI (visible in diff panel left pane).
+      // When no diff is open, the virtual document isn't visible — same as before.
+      if (threadSide === "old") {
+        filePath = vscode.Uri.parse(`${SCHEME_BASE}:/${threadPath}`);
+      } else {
+        filePath = vscode.Uri.file(`${this._workspaceRoot}/${threadPath}`);
+      }
+
+      // 1-based session lines → 0-based VS Code range
+      const startLine = threadLine - 1;
+      const endLine = (threadLineEnd ?? threadLine) - 1;
+      range = new vscode.Range(startLine, 0, endLine, 0);
+    }
 
     const thread = this._controller.createCommentThread(
       filePath,

@@ -3,7 +3,8 @@ import * as path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { SessionData } from "./sessionStore";
-import { getDefaultTargetBranch } from "./config";
+import { describeAnchor } from "./anchor";
+import type { DiffFileEntry } from "./diffParser";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +16,10 @@ export interface SkillContext {
   targetBranch: string;
   workspaceRoot: string;
   changedFiles: string[];
+  /** Parsed diff entries (with hunks), when available from the diff panel. */
+  diffFiles?: DiffFileEntry[];
+  /** Ref actually diffed against (target tip or resolved merge-base SHA). */
+  baseRef?: string;
 }
 
 /**
@@ -26,9 +31,16 @@ export interface SkillContext {
  */
 export class SkillGenerator {
   private readonly _workspaceRoot: string;
+  private readonly _getFallbackTargetBranch: () => string;
 
-  constructor(workspaceRoot: string) {
+  // Fallback target branch is injected (not read from ./config) so this
+  // module stays vscode-free — the CLI bundles it with no extension host.
+  constructor(
+    workspaceRoot: string,
+    getFallbackTargetBranch: () => string = () => "main",
+  ) {
     this._workspaceRoot = workspaceRoot;
+    this._getFallbackTargetBranch = getFallbackTargetBranch;
   }
 
   /**
@@ -47,19 +59,38 @@ export class SkillGenerator {
 
     fs.writeFileSync(path.join(reviewDir, "AGENTS.md"), agentsMd);
     fs.writeFileSync(path.join(reviewDir, "CLAUDE.md"), claudeMd);
+
+    if (context.diffFiles) {
+      const diffStructure = {
+        baseRef: context.baseRef ?? null,
+        targetBranch: context.targetBranch,
+        files: context.diffFiles,
+      };
+      fs.writeFileSync(
+        path.join(reviewDir, "diff-structure.json"),
+        JSON.stringify(diffStructure, null, 2),
+      );
+    }
   }
 
   /**
    * Build a SkillContext from the current workspace state.
+   *
+   * `diffFiles`/`baseRef` are optional — pass the parsed diff panel state
+   * (with hunks) when available so `generate()` can also emit
+   * `.review/diff-structure.json` for agent consumption (R4).
    */
   async buildContext(
     sessionId: string,
     sessionFilePath: string,
     session: SessionData | null,
+    diffFiles?: DiffFileEntry[],
+    baseRef?: string,
   ): Promise<SkillContext> {
     const repoName = await this._getRepoName();
     const sourceBranch = session?.sourceBranch ?? sessionId;
-    const targetBranch = session?.targetBranch ?? getDefaultTargetBranch();
+    const targetBranch =
+      session?.targetBranch ?? this._getFallbackTargetBranch();
     const changedFiles = await this._getChangedFiles(targetBranch);
 
     return {
@@ -70,6 +101,8 @@ export class SkillGenerator {
       targetBranch,
       workspaceRoot: this._workspaceRoot,
       changedFiles,
+      diffFiles,
+      baseRef,
     };
   }
 
@@ -150,15 +183,7 @@ automatically when you make changes.
   "threads": [
     {
       "id": "string — UUID v4",
-      "anchor": {
-        "type": "diff-line",
-        "hash": "string — SHA-256 hash of line content (first 16 chars)",
-        "path": "string — file path relative to repo root",
-        "preview": "string — first 80 chars of the anchored line",
-        "line": "number — 1-based line number",
-        "lineEnd": "number | undefined — end line for multi-line anchors",
-        "side": "'old' | 'new' — which side of the diff"
-      },
+      "anchor": "one of the two anchor shapes below, keyed by 'type'",
       "status": "'open' | 'resolved' | 'wontfix' | 'outdated'",
       "severity": "'critical' | 'improvement' | 'style' | 'question'",
       "messages": [
@@ -183,6 +208,35 @@ automatically when you make changes.
 }
 \`\`\`
 
+\`thread.anchor\` is a discriminated union on \`type\`. There are two shapes today:
+
+**\`diff-line\`** — a code-review thread anchored to a file/line:
+
+\`\`\`json
+{
+  "type": "diff-line",
+  "hash": "string — SHA-256 hash of line content (first 8 hex chars)",
+  "path": "string — file path relative to repo root",
+  "preview": "string — first 80 chars of the anchored line",
+  "line": "number — 1-based line number",
+  "lineEnd": "number | undefined — end line for multi-line anchors",
+  "side": "'old' | 'new' — which side of the diff"
+}
+\`\`\`
+
+**\`dom-element\`** — UI feedback captured from a browser click, with no file/line:
+
+\`\`\`json
+{
+  "type": "dom-element",
+  "url": "string — page URL the annotation was taken on",
+  "selector": "string — CSS selector identifying the element",
+  "label": "string — short human-readable description of the element",
+  "screenshot": "string | undefined — path relative to .review/ of a captured screenshot crop",
+  "viewport": "{ width: number; height: number } | undefined — viewport size at capture time"
+}
+\`\`\`
+
 ## Operations
 
 ### Read review state
@@ -195,7 +249,7 @@ Add an object to the \`threads\` array:
 
 1. Generate a UUID v4 for the thread \`id\`
 2. Set \`anchor\` with the file path, line number, side, and a preview of the line content
-3. Compute \`anchor.hash\` as the first 16 characters of SHA-256 of the line content
+3. Compute \`anchor.hash\` as the first 8 hex characters of SHA-256 of the line content
 4. Set \`status\` to \`"open"\`
 5. Set \`severity\` to one of: \`critical\`, \`improvement\`, \`style\`, \`question\`
 6. Add your message to \`messages\` with a new UUID, \`authorType: "agent"\`, your name, and the text
@@ -243,6 +297,7 @@ Update the top-level \`verdict\` field to \`"changes_requested"\` or \`null\` (c
 7. **Fix when clear**: If the fix is unambiguous, apply it to the code AND resolve the thread
 8. **Ask when unclear**: If the issue is ambiguous, reply with a question instead of guessing
 ${openThreads.length > 0 ? `\n## Open Threads Summary\n\n${this._renderThreadSummary(openThreads)}` : ""}
+${ctx.diffFiles ? `\n## Diff Structure\n\n\`.review/diff-structure.json\` has the full parsed diff — every changed file and its hunks — so you can orient yourself without re-running \`git diff\` or parsing patch text.\n\nHunks are addressed as **file + 1-based hunk index**: "hunk 2 of \`src/App.tsx\`" means the second entry in that file's \`hunks\` array. Each hunk records \`newStart\`/\`firstChangedNewLine\` (where to look in the current file), \`additions\`/\`deletions\`, and a \`preview\` of the first changed line — enough to jump straight to the relevant lines instead of scanning the whole file.\n` : ""}
 `;
   }
 
@@ -253,8 +308,16 @@ ${openThreads.length > 0 ? `\n## Open Threads Summary\n\n${this._renderThreadSum
         const preview = lastMsg
           ? `${lastMsg.author}: ${lastMsg.text.slice(0, 100)}${lastMsg.text.length > 100 ? "..." : ""}`
           : "(no messages)";
+        // Preserve the original single-line diff-line summary (no Preview
+        // line here, unlike agentInvoker's formatThread) for byte-identical
+        // output on diff-line-only sessions; dom-element gets the full
+        // describeAnchor rendering since it has no prior format to match.
+        const anchorLine =
+          t.anchor.type === "diff-line"
+            ? `- **File**: \`${t.anchor.path}\` line ${t.anchor.line} (${t.anchor.side} side)`
+            : describeAnchor(t.anchor);
         return `### Thread \`${t.id.slice(0, 8)}\` — ${t.severity} [${t.status}]
-- **File**: \`${t.anchor.path}\` line ${t.anchor.line} (${t.anchor.side} side)
+${anchorLine}
 - **Last message**: ${preview}`;
       })
       .join("\n\n");

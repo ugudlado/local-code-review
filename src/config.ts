@@ -14,3 +14,9 @@ export function getConfiguredDiffBaseMode(): DiffBaseMode {
     .get<string>("diffBase", "merge-base");
   return value === "target-tip" ? "target-tip" : "merge-base";
 }
+
+export function getCapturePort(): number {
+  return vscode.workspace
+    .getConfiguration("resolvr")
+    .get<number>("capturePort", 43117);
+}

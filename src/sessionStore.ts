@@ -13,17 +13,28 @@ export interface SessionData {
   workspaceName?: string;
 }
 
+export type ThreadAnchor =
+  | {
+      type: "diff-line";
+      hash: string;
+      path: string;
+      preview: string;
+      line: number;
+      lineEnd?: number;
+      side: "old" | "new";
+    }
+  | {
+      type: "dom-element";
+      url: string;
+      selector: string;
+      label: string;
+      screenshot?: string;
+      viewport?: { width: number; height: number };
+    };
+
 export interface SessionThread {
   id: string;
-  anchor: {
-    type: "diff-line";
-    hash: string;
-    path: string;
-    preview: string;
-    line: number;
-    lineEnd?: number;
-    side: "old" | "new";
-  };
+  anchor: ThreadAnchor;
   status: "open" | "resolved" | "approved" | "wontfix" | "outdated";
   severity: "critical" | "improvement" | "style" | "question";
   messages: SessionMessage[];

@@ -124,6 +124,8 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
           sessionId,
           sessionStore.getSessionFilePath(sessionId),
           session,
+          diffPanelManager.files,
+          diffPanelManager.baseRef,
         );
         await skillGenerator.generate(skillContext, session);
         outputChannel.appendLine(`Agent skill files generated in .review/`);
@@ -161,7 +163,15 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
     await populateDiffs(sessionId);
 
     const existingSession = await sessionStore.getSession(sessionId);
-    if (existingSession) await hydrateSession(sessionId);
+    if (existingSession) {
+      await hydrateSession(sessionId);
+    } else {
+      // No session file yet, but a thread can still land here from an
+      // external writer (browser capture) before any in-process comment
+      // creates the file — arm the watcher now so that first write isn't
+      // missed. hydrateSession() re-arms it once the file actually exists.
+      sessionWatcher.watch(sessionStore.getSessionFilePath(sessionId));
+    }
   };
 
   const subscribeBranchChanges = (): void => {
@@ -183,7 +193,13 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
       await populateDiffs(newSessionId);
 
       const existingSession = await sessionStore.getSession(newSessionId);
-      if (existingSession) await hydrateSession(newSessionId);
+      if (existingSession) {
+        await hydrateSession(newSessionId);
+      } else {
+        // Same reasoning as init(): arm the watcher pre-emptively so a
+        // thread created externally on this brand-new branch isn't missed.
+        sessionWatcher.watch(sessionStore.getSessionFilePath(newSessionId));
+      }
     });
   };
 

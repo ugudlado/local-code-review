@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import type { SessionData, SessionThread } from "./sessionStore";
+import { describeAnchor } from "./anchor";
 
 interface AgentConfig {
   /** CLI command name */
@@ -85,8 +86,7 @@ function formatThread(thread: SessionThread): string {
     .join("\n");
 
   return `### Thread \`${thread.id.slice(0, 8)}\` — ${thread.severity}
-- **File**: \`${thread.anchor.path}\` line ${thread.anchor.line} (${thread.anchor.side} side)
-- **Preview**: \`${thread.anchor.preview || "(no preview)"}\`
+${describeAnchor(thread.anchor)}
 - **Messages**:
 ${msgs}`;
 }

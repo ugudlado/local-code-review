@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "path";
 import { BranchDetector } from "./branchDetector";
 import { SessionStore } from "./sessionStore";
 import { SkillGenerator } from "./skillGenerator";
@@ -8,14 +9,17 @@ import { SessionWatcher } from "./sessionWatcher";
 import {
   BaseContentProvider,
   EmptyContentProvider,
+  AnnotationContentProvider,
   SCHEME_BASE,
   SCHEME_EMPTY,
+  SCHEME_ANNOTATION,
 } from "./baseContentProvider";
 import { DiffPanelManager } from "./diffPanelManager";
 import { ThreadsTreeProvider } from "./threadsTree";
-import { getDefaultTargetBranch } from "./config";
+import { getDefaultTargetBranch, getCapturePort } from "./config";
 import { registerCommands } from "./activation/commands";
 import { createLifecycle } from "./activation/lifecycle";
+import { startCaptureServer } from "./captureServer";
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel("Resolvr");
@@ -35,6 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
     getDefaultTargetBranch(),
   );
   const emptyProvider = new EmptyContentProvider();
+  const annotationProvider = new AnnotationContentProvider();
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
       SCHEME_BASE,
@@ -43,6 +48,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.registerTextDocumentContentProvider(
       SCHEME_EMPTY,
       emptyProvider,
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(
+      SCHEME_ANNOTATION,
+      annotationProvider,
     ),
     baseProvider,
   );
@@ -62,6 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
     workspaceRoot,
     outputChannel,
     sessionStore,
+    annotationProvider,
   );
 
   const diffPanelManager = new DiffPanelManager(
@@ -72,7 +82,10 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionStore,
   );
 
-  const skillGenerator = new SkillGenerator(workspaceRoot);
+  const skillGenerator = new SkillGenerator(
+    workspaceRoot,
+    getDefaultTargetBranch,
+  );
 
   // Threads tree view — grouped by status (below Changed Files)
   const threadsTree = new ThreadsTreeProvider();
@@ -141,6 +154,42 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   lifecycle.subscribe();
+
+  // Browser annotation capture endpoint. Uses its own SessionStore instance
+  // (no onBeforeWrite) so its writes are NOT suppressed by sessionWatcher —
+  // unlike VS Code-originated writes, there is no in-process loadThreads()
+  // call after a capture-server write, so the file watcher must be the one
+  // to pick it up and refresh the Threads view.
+  const captureSessionStore = new SessionStore({ workspaceRoot });
+  let captureServer: import("http").Server | undefined;
+  void startCaptureServer({
+    port: getCapturePort(),
+    getSessionId: () => branchDetector.commentSessionId,
+    ensureSessionDefaults: () => ({
+      worktreePath: workspaceRoot,
+      sourceBranch:
+        branchDetector.branchName ??
+        branchDetector.commentSessionId ??
+        "unknown",
+      targetBranch: lifecycle.resolveTargetBranch(),
+    }),
+    sessionStore: captureSessionStore,
+    getContext: () => ({
+      workspaceName: path.basename(workspaceRoot),
+      workspaceRoot,
+      branch: branchDetector.branchName,
+      sessionId: branchDetector.commentSessionId,
+    }),
+    annotateScriptPath: context.asAbsolutePath(
+      path.join("assets", "annotate.js"),
+    ),
+    log: (msg) => outputChannel.appendLine(msg),
+  }).then((server) => {
+    captureServer = server;
+  });
+  context.subscriptions.push({
+    dispose: () => captureServer?.close(),
+  });
 
   registerCommands({
     context,
