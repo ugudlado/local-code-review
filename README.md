@@ -39,9 +39,13 @@ Sessions are stored in `.review/sessions/` as JSON files you can diff, commit, o
 
 For Vite projects, add the plugin and you're done — the annotation panel appears on every dev page:
 
+```bash
+npm install -D @ugudlado1/resolvr
+```
+
 ```ts
 // vite.config.ts
-import { resolvrAnnotations } from "resolvr/vite";
+import { resolvrAnnotations } from "@ugudlado1/resolvr/vite";
 export default { plugins: [resolvrAnnotations()] };
 ```
 

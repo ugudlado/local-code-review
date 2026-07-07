@@ -14,7 +14,7 @@ import {
 // Vite plugin: the complete browser-feedback surface for Vite projects.
 //
 //   // vite.config.ts
-//   import { resolvrAnnotations } from "resolvr/vite";
+//   import { resolvrAnnotations } from "@ugudlado1/resolvr/vite";
 //   export default { plugins: [resolvrAnnotations()] };
 //
 // Because the plugin runs inside the dev server, in the project directory, it

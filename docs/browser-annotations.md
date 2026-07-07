@@ -7,9 +7,13 @@ Every surface writes the same `.review/sessions/<branch>-code.json` file, so
 
 ## Vite projects (recommended — zero setup after one line)
 
+```bash
+npm install -D @ugudlado1/resolvr
+```
+
 ```ts
 // vite.config.ts
-import { resolvrAnnotations } from "resolvr/vite";
+import { resolvrAnnotations } from "@ugudlado1/resolvr/vite";
 export default { plugins: [resolvrAnnotations()] };
 ```
 

@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: '*.vsix'
+
+  marketplace-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # VSCE_PAT lives on this environment (not a plain repo secret).
+    environment: resolvr-npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+      - run: pnpm vsce publish --pat "$VSCE_PAT" --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  npm-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Required by the npm trusted-publisher config (OIDC claim must include it).
+    environment: resolvr-npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Don't pass cache/registry-url here: setup-node would write an .npmrc
+      # containing _authToken=${NODE_AUTH_TOKEN} (empty), which shadows OIDC.
+      - run: npm install -g npm@latest pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: ./scripts/publish-npm.sh
+
+  github-release:
+    needs: [marketplace-publish, npm-publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: '*.vsix'

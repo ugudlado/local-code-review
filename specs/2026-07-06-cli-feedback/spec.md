@@ -47,7 +47,7 @@ The session-identity rule everywhere else is "derive from the checkout you launc
 
 ```ts
 // vite.config.ts
-import { resolvrAnnotations } from "resolvr/vite";
+import { resolvrAnnotations } from "@ugudlado1/resolvr/vite";
 export default { plugins: [resolvrAnnotations()] };
 ```
 
