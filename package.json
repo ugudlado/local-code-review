@@ -317,6 +317,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write src/**/*.ts",
+    "prepack": "pnpm build",
     "prepare": "husky",
     "knip": "knip",
     "knip:fix": "knip --fix"

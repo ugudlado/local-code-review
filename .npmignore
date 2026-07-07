@@ -1,0 +1,10 @@
+# npm whitelist via blanket-ignore + negations (vsce uses .vscodeignore instead;
+# vsce cannot combine .vscodeignore with a package.json "files" property).
+*
+!dist/
+dist/*
+!dist/cli.js
+!dist/vite.js
+!assets/
+assets/*
+!assets/annotate.js

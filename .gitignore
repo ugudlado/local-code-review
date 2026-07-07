@@ -50,3 +50,4 @@ specs-completed/
 .claude/worktrees/
 .verify-screenshots/
 .tmp
+*.tgz
