@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0 — 2026-07-08
+
+- Get Started walkthrough covering the full loop: feature branch, diff view, first comment, resolve with AI, browser and CLI surfaces
+- Welcome content in the Threads and Changed Files views, including default-branch guidance
+- Open-thread count badge on the Threads view
+- New command: Copy Browser Annotation Snippet (script tag with your configured capture port)
+- `resolvr serve` writes agent context files at launch, same as the Vite plugin
+
+* Tag pushes now publish to the VS Code Marketplace and npm automatically
+  ! Annotations captured on the default branch now appear in VS Code; before, they were saved but never shown
+  ! Generated AGENTS.md now matches the real schema: 120-char previews, `approved` status, single branch line
+
+- Dropped the unused `reviewVerdict` and `anchor.screenshot` fields
+
 ## 1.3.0 — 2026-07-07
 
 - Hunk navigation: changed files expand to their hunks in the sidebar; click a hunk to open the diff revealed at it, or walk every hunk across all files with `alt+j`/`alt+k` (wraps at the ends)
