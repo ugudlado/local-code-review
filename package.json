@@ -127,6 +127,11 @@
       {
         "command": "resolvr.prevHunk",
         "title": "Resolvr: Previous Hunk"
+      },
+      {
+        "command": "resolvr.copyAnnotationSnippet",
+        "title": "Resolvr: Copy Browser Annotation Snippet",
+        "icon": "$(browser)"
       }
     ],
     "views": {
@@ -144,8 +149,75 @@
     "viewsWelcome": [
       {
         "view": "resolvr.changedFiles",
-        "contents": "No changes detected.",
-        "when": "!resolvr.hasDiffPanel"
+        "contents": "You're on the default branch — Resolvr reviews a feature branch against its target.\nCheck out a feature branch to start a review, or diff against a different base:\n[Change Target Branch](command:resolvr.changeTargetBranch)",
+        "when": "!resolvr.hasDiffPanel && resolvr.onDefaultBranch"
+      },
+      {
+        "view": "resolvr.changedFiles",
+        "contents": "No changes detected.\n[Refresh](command:resolvr.refresh)",
+        "when": "!resolvr.hasDiffPanel && !resolvr.onDefaultBranch"
+      },
+      {
+        "view": "resolvr.threads",
+        "contents": "No review threads yet.\nComment on code: open a changed file and click the ＋ that appears in the gutter.\n[Open Diff View](command:resolvr.openDiff)\nAnnotate your running app from the browser:\n[Copy Annotation Snippet](command:resolvr.copyAnnotationSnippet)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "resolvr.gettingStarted",
+        "title": "Get started with Resolvr",
+        "description": "Review code with inline threads, annotate your running app from the browser, and resolve feedback with an AI agent.",
+        "steps": [
+          {
+            "id": "checkoutBranch",
+            "title": "Check out a feature branch",
+            "description": "Resolvr reviews your working branch against a target branch (auto-detected main/master).\n[Change Target Branch](command:resolvr.changeTargetBranch)",
+            "media": {
+              "markdown": "media/walkthrough/branch.md"
+            }
+          },
+          {
+            "id": "openDiff",
+            "title": "Open the diff view",
+            "description": "See every changed file and hunk, and step through the review stream.\n[Open Diff View](command:resolvr.openDiff)",
+            "media": {
+              "markdown": "media/walkthrough/diff.md"
+            },
+            "completionEvents": [
+              "onCommand:resolvr.openDiff"
+            ]
+          },
+          {
+            "id": "firstComment",
+            "title": "Comment on a line",
+            "description": "Open any changed file and click the ＋ that appears in the gutter to start a review thread.",
+            "media": {
+              "markdown": "media/walkthrough/comment.md"
+            }
+          },
+          {
+            "id": "resolveWithAI",
+            "title": "Resolve threads with AI",
+            "description": "Hand open threads to your coding agent — it reads the session context from .review/ and replies in-thread.\n[Resolve with AI](command:resolvr.resolveWithAI)",
+            "media": {
+              "markdown": "media/walkthrough/resolve-ai.md"
+            },
+            "completionEvents": [
+              "onCommand:resolvr.resolveWithAI"
+            ]
+          },
+          {
+            "id": "beyondEditor",
+            "title": "Annotate from the browser & CLI",
+            "description": "Capture UI feedback by clicking elements in your running app, or file comments from the terminal.\n[Copy Annotation Snippet](command:resolvr.copyAnnotationSnippet)",
+            "media": {
+              "markdown": "media/walkthrough/beyond-editor.md"
+            },
+            "completionEvents": [
+              "onCommand:resolvr.copyAnnotationSnippet"
+            ]
+          }
+        ]
       }
     ],
     "menus": {

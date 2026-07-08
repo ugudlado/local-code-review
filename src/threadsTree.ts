@@ -74,10 +74,23 @@ export class ThreadsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private _threads: SessionThread[] = [];
+  private _view: vscode.TreeView<TreeNode> | undefined;
+
+  /** Attach the TreeView so updateThreads can maintain its open-count badge. */
+  attachView(view: vscode.TreeView<TreeNode>): void {
+    this._view = view;
+  }
 
   updateThreads(threads: SessionThread[]): void {
     this._threads = threads;
     this._onDidChangeTreeData.fire();
+    if (this._view) {
+      const open = threads.filter((t) => t.status === "open").length;
+      this._view.badge =
+        open > 0
+          ? { value: open, tooltip: `${open} open review threads` }
+          : undefined;
+    }
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {

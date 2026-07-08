@@ -10,6 +10,7 @@ import {
   resolveWithNewAgent,
 } from "../agentInvoker";
 import { listBranchesViaCli } from "../git";
+import { getCapturePort } from "../config";
 
 // Minimal types for the VS Code built-in Git extension API.
 interface GitExtensionAPI {
@@ -330,6 +331,18 @@ export function registerCommands(deps: CommandDeps): void {
         );
       }
     }),
+
+    vscode.commands.registerCommand(
+      "resolvr.copyAnnotationSnippet",
+      async () => {
+        const snippet = `<script src="http://127.0.0.1:${getCapturePort()}/annotate.js"></script>`;
+        await vscode.env.clipboard.writeText(snippet);
+        void vscode.window.showInformationMessage(
+          "Annotation script tag copied — paste it into your dev page. " +
+            "Vite projects: use the resolvr/vite plugin instead (see docs/browser-annotations.md).",
+        );
+      },
+    ),
   );
 }
 

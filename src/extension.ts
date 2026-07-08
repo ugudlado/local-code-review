@@ -93,6 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: threadsTree,
     showCollapseAll: true,
   });
+  threadsTree.attachView(threadsTreeView);
 
   context.subscriptions.push(
     statusBar,
@@ -174,6 +175,9 @@ export function activate(context: vscode.ExtensionContext): void {
       targetBranch: lifecycle.resolveTargetBranch(),
     }),
     sessionStore: captureSessionStore,
+    // launchBranch intentionally omitted: unlike CLI/Vite, the extension
+    // doesn't launch the user's app, so it can't know which branch the
+    // running UI was built from — the drift warning can't apply here.
     getContext: () => ({
       workspaceName: path.basename(workspaceRoot),
       workspaceRoot,
