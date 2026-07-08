@@ -4,13 +4,6 @@
   "description": "Open a diff, leave comments, and let Claude work through them.",
   "version": "1.4.0",
   "packageManager": "pnpm@11.5.2",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@vscode/vsce-sign",
-      "esbuild",
-      "keytar"
-    ]
-  },
   "publisher": "ugudlado",
   "repository": {
     "type": "git",

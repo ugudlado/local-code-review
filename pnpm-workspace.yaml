@@ -1,0 +1,6 @@
+# pnpm build-script approvals (pnpm 11 no longer reads the "pnpm" field in
+# package.json, and CI has no interactive approval prompt).
+allowBuilds:
+  "@vscode/vsce-sign": true
+  esbuild: true
+  keytar: true
