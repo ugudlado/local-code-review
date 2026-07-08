@@ -3,6 +3,7 @@ import * as path from "path";
 import { SessionStore } from "./sessionStore";
 import { buildThread, diffLineAnchor } from "./threadFactory";
 import { startCaptureServer } from "./captureServer";
+import { SkillGenerator } from "./skillGenerator";
 import { gitRevParse } from "./git";
 import {
   currentBranchSync,
@@ -123,8 +124,29 @@ async function cmdServe(argv: string[]): Promise<void> {
   const [target] = takeFlag(rest, "--target");
   const port = portStr ? Number(portStr) : DEFAULT_PORT;
 
-  const { workspaceRoot, branch } = await resolveRepoContext();
+  const { workspaceRoot, branch, sessionId } = await resolveRepoContext();
   const sessionStore = new SessionStore({ workspaceRoot });
+
+  // Session + agent context files exist before the first annotation — same
+  // as the Vite plugin. Never let this block serving.
+  try {
+    const { session } = await sessionStore.ensureSession(sessionId, {
+      worktreePath: workspaceRoot,
+      sourceBranch: branch,
+      targetBranch: detectTargetBranch(workspaceRoot, target),
+    });
+    const skillGenerator = new SkillGenerator(workspaceRoot, () =>
+      detectTargetBranch(workspaceRoot, target),
+    );
+    const skillContext = await skillGenerator.buildContext(
+      sessionId,
+      sessionStore.getSessionFilePath(sessionId),
+      session,
+    );
+    await skillGenerator.generate(skillContext, session);
+  } catch (err) {
+    process.stderr.write(`resolvr: session setup failed: ${String(err)}\n`);
+  }
 
   const server = await startCaptureServer({
     port,
