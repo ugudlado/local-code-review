@@ -83,6 +83,32 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
     }
   };
 
+  /** Drives the viewsWelcome copy for the Changed Files view. */
+  const setDefaultBranchContext = (onDefault: boolean): void => {
+    void vscode.commands.executeCommand(
+      "setContext",
+      "resolvr.onDefaultBranch",
+      onDefault,
+    );
+  };
+
+  /**
+   * On default branches sessionId is null, but browser/CLI captures still
+   * write to the commentSessionId-keyed file (e.g. main-code.json). Hydrate
+   * it if it exists — or arm the watcher so the first external write shows —
+   * so those threads aren't invisible until the user switches branches.
+   */
+  const adoptDefaultBranchSession = async (): Promise<void> => {
+    const commentId = branchDetector.commentSessionId;
+    if (!commentId) return;
+    if (await sessionStore.getSession(commentId)) {
+      await hydrateSession(commentId);
+    } else {
+      _currentSessionId = commentId;
+      sessionWatcher.watch(sessionStore.getSessionFilePath(commentId));
+    }
+  };
+
   const populateDiffs = async (sessionId?: string): Promise<void> => {
     const targetBranch = resolveTargetBranch();
     await diffPanelManager.populate(sessionId, targetBranch);
@@ -149,6 +175,7 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
     await resolveWorkspace();
     const sessionId = await branchDetector.initialize();
     _currentSessionId = sessionId;
+    setDefaultBranchContext(!sessionId);
 
     if (!sessionId) {
       statusBar.setNoBranch();
@@ -156,6 +183,7 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
         "On default branch — populating working-tree diffs",
       );
       await populateDiffs();
+      await adoptDefaultBranchSession();
       return;
     }
 
@@ -180,6 +208,7 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
         `Branch changed — session: ${newSessionId ?? "none"}`,
       );
       _currentSessionId = newSessionId;
+      setDefaultBranchContext(!newSessionId);
       sessionWatcher.unwatch();
 
       if (!newSessionId) {
@@ -187,6 +216,7 @@ export function createLifecycle(deps: LifecycleDeps): Lifecycle {
         threadsTree.updateThreads([]);
         statusBar.setNoBranch();
         await populateDiffs();
+        await adoptDefaultBranchSession();
         return;
       }
 

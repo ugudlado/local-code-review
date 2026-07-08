@@ -131,5 +131,5 @@ No environment variables required. The extension reads from VS Code settings:
 - **Worktree `.git` is a file**: Git worktrees have a `.git` file (not directory) pointing to the parent repo. Use `git rev-parse --git-common-dir` to find the real repo root
 - **AI review flow**: `skillGenerator.ts` writes `.review/AGENTS.md` at runtime with session context so AI agents can read thread data. The `.review/` directory is gitignored.
 - **Activation**: Extension activates on `workspaceContains:.review/` or `onStartupFinished` — effectively always-on once installed
-- **Default-branch behavior**: sessions never hydrate on `main`/`master` (no threads shown in VS Code), by design — but the capture endpoints still accept writes there. Test thread display on a feature branch.
+- **Default-branch behavior**: on `main`/`master` there's no diff-based review (working-tree diffs only), but an existing session file (e.g. from browser captures) **does** hydrate — threads written on the default branch stay visible. Full review flow still needs a feature branch.
 - **Capture endpoint security**: localhost-bound, Origin-checked CORS, and an unconditional localhost `Host` check (DNS-rebinding defense) on every route — don't loosen any of the three.
