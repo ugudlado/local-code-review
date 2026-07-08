@@ -152,7 +152,6 @@ Your role is to review code changes, respond to review threads, and resolve issu
 
 ## Current State
 
-- **Branch**: \`${ctx.sessionId}\`
 - **Branch**: \`${ctx.sourceBranch}\` → \`${ctx.targetBranch}\`
 - **Session file**: \`${ctx.sessionFilePath}\`
 - **Open threads**: ${openThreads.length}
@@ -184,7 +183,7 @@ automatically when you make changes.
     {
       "id": "string — UUID v4",
       "anchor": "one of the two anchor shapes below, keyed by 'type'",
-      "status": "'open' | 'resolved' | 'wontfix' | 'outdated'",
+      "status": "'open' | 'resolved' | 'approved' | 'wontfix' | 'outdated'",
       "severity": "'critical' | 'improvement' | 'style' | 'question'",
       "messages": [
         {
@@ -217,7 +216,7 @@ automatically when you make changes.
   "type": "diff-line",
   "hash": "string — SHA-256 hash of line content (first 8 hex chars)",
   "path": "string — file path relative to repo root",
-  "preview": "string — first 80 chars of the anchored line",
+  "preview": "string — first 120 chars of the anchored line",
   "line": "number — 1-based line number",
   "lineEnd": "number | undefined — end line for multi-line anchors",
   "side": "'old' | 'new' — which side of the diff"
@@ -232,7 +231,6 @@ automatically when you make changes.
   "url": "string — page URL the annotation was taken on",
   "selector": "string — CSS selector identifying the element",
   "label": "string — short human-readable description of the element",
-  "screenshot": "string | undefined — path relative to .review/ of a captured screenshot crop",
   "viewport": "{ width: number; height: number } | undefined — viewport size at capture time"
 }
 \`\`\`

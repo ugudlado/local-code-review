@@ -7,7 +7,6 @@ export interface SessionData {
   sourceBranch: string;
   targetBranch: string;
   verdict: "approved" | "changes_requested" | null;
-  reviewVerdict?: "approved" | "changes_requested" | null;
   threads: SessionThread[];
   metadata: { createdAt: string; updatedAt: string };
   workspaceName?: string;
@@ -28,7 +27,6 @@ export type ThreadAnchor =
       url: string;
       selector: string;
       label: string;
-      screenshot?: string;
       viewport?: { width: number; height: number };
     };
 
